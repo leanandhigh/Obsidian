@@ -10,7 +10,7 @@ Library.ShowToggleFrameInKeybinds = true
 
 local Loading = Library:CreateLoading({
     Title = "Obsidian",
-    Icon = 103958626888975,
+    Icon = 121622919214733,
     TotalSteps = 4
 })
 
@@ -38,7 +38,7 @@ Loading:Continue()
 local Window = Library:CreateWindow({
 	Title = "Obsidian",
 	Footer = "version: example",
-	Icon = 103958626888975,
+	Icon = 121622919214733,
 	NotifySide = "Right",
 	ShowCustomCursor = true,
 })

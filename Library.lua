@@ -472,7 +472,7 @@ local Templates = {
     },
     Loading = {
         Title = "Obsidian",
-        Icon = 103958626888975,
+        Icon = 121622919214733,
         IconSize = UDim2.fromOffset(30, 30),
 
         LoadingIcon = CustomImageManager.GetAsset("LoadingIcon"),
