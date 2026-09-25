@@ -179,7 +179,9 @@ local Library = {
     --// Obsidian Windows \\--
     ScreenGui = nil,
     Window = nil,
+    ChangableWindow = nil,
     WindowContainer = nil,
+    ChangableWindowContainer = nil,
 
     --// Search \\--
     SearchText = "",
@@ -430,6 +432,43 @@ local Templates = {
         AutoDismiss = true,
         OutsideClickDismiss = true,
         FooterButtons = {}
+    },
+    ChangableWindow = {
+        Title = "No Title",
+        Footer = "No Footer",
+
+        Position = UDim2.fromOffset(6, 6),
+        Size = UDim2.fromOffset(450, 240),
+        IconSize = UDim2.fromOffset(30, 30),
+
+        AutoShow = true,
+        Center = true,
+        Draggable = false,
+        AlwaysOnTop = true,
+
+        CornerRadius = 4,
+        NotifySide = "Right",
+        ShowCustomCursor = true,
+
+        Font = Enum.Font.Code,
+
+        UnlockMouseWhileOpen = true,
+
+        --// Background \\--
+        BackgroundImageEnabled = false,
+        BackgroundImage = ""
+    },
+    Canvas = {
+        Visible = true,
+
+        Padding = UDim.new(0, 8),
+
+        FillDirection = Enum.FillDirection.Vertical,
+
+        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+
+        Lines = {},
     },
     Loading = {
         Title = "Obsidian",
@@ -12411,6 +12450,493 @@ function Library:CreateWindow(WindowInfo)
     return Window
 end
 
+function Library:CreateChangableWindow(Info)
+    Info = Library:Validate(Info, Templates.ChangableWindow)
+    local ViewportSize: Vector2 = workspace.CurrentCamera.ViewportSize
+    if RunService:IsStudio() and ViewportSize.X <= 5 and ViewportSize.Y <= 5 then
+        repeat
+            ViewportSize = workspace.CurrentCamera.ViewportSize
+            task.wait()
+        until ViewportSize.X > 5 and ViewportSize.Y > 5
+    end
+
+    local MaxX = ViewportSize.X - 64
+    local MaxY = ViewportSize.Y - 64
+
+    Info.Size = UDim2.fromOffset(
+        math.clamp(Info.Size.X.Offset, 450, MaxX),
+        math.clamp(Info.Size.Y.Offset, 240, MaxY)
+    )
+    if typeof(Info.Font) == "EnumItem" then
+        Info.Font = Font.fromEnum(Info.Font :: any)
+    end
+    Info.CornerRadius = math.min(Info.CornerRadius, 20)
+
+    Library.CornerRadius = Info.CornerRadius
+    Library:SetNotifySide(Info.NotifySide)
+    Library.ShowCustomCursor = Info.ShowCustomCursor
+    Library.Scheme.Font = Info.Font
+
+    local MainFrame
+    local WindowTitle
+    local WindowIcon
+    local Container
+    local BottomBackground
+    local FooterLabel
+    local TopBar
+
+    do
+        MainFrame = New("Frame", {
+            BackgroundColor3 = function()
+                return Library:GetBetterColor(Library.Scheme.BackgroundColor, -1)
+            end,
+            Name = "ChangableWindow",
+            Position = Info.Position,
+            Size = Info.Size,
+            Visible = false,
+            Parent = ScreenGui,
+        })
+        table.insert(
+            Library.Corners,
+            New("UICorner", {
+                CornerRadius = UDim.new(0, Info.CornerRadius),
+                Parent = MainFrame,
+            })
+        )
+        table.insert(
+            Library.Scales,
+            New("UIScale", {
+                Parent = MainFrame,
+            })
+        )
+        Library:AddOutline(MainFrame)
+        Library:MakeLine(MainFrame, {
+            Position = UDim2.fromOffset(0, 48),
+            Size = UDim2.new(1, 0, 0, 1),
+        })
+
+        if Info.Center then
+            MainFrame.Position = UDim2.new(0.5, -MainFrame.Size.X.Offset / 2, 0.5, -MainFrame.Size.Y.Offset / 2)
+        end
+
+        --// Top Bar \\-
+        TopBar = New("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 48),
+            Parent = MainFrame,
+        })
+        if Info.Draggable then
+            Library:MakeDraggable(MainFrame, TopBar, false, true)
+        end
+
+        --// Title \\--
+        local TitleHolder = New("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            BackgroundTransparency = 1,
+            Position = UDim2.fromScale(0.5, 0.5),
+            Size = UDim2.new(1, -20, 1, -20),
+            Parent = TopBar,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            HorizontalAlignment = Enum.HorizontalAlignment.Left,
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Padding = UDim.new(0, 6),
+            Parent = TitleHolder,
+        })
+
+        if Info.Icon then
+            local Icon = Library:GetCustomIcon(Info.Icon)
+            WindowIcon = New("ImageLabel", {
+                Image = Icon.Url,
+                ImageRectOffset = Icon.ImageRectOffset,
+                ImageRectSize = Icon.ImageRectSize,
+                Size = Info.IconSize,
+                Parent = TitleHolder,
+            })
+        else
+            WindowIcon = New("TextLabel", {
+                BackgroundTransparency = 1,
+                Size = Info.IconSize,
+                Text = `<b>{Info.Title:sub(1, 1)}</b>`,
+                TextScaled = true,
+                Visible = false,
+                Parent = TitleHolder,
+            })
+        end
+
+        local X = Library:GetTextBounds(
+            Info.Title,
+            Library.Scheme.Font,
+            20,
+            TitleHolder.AbsoluteSize.X - (Info.Icon and Info.IconSize.X.Offset + 6 or 0) - 12
+        )
+        WindowTitle = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, X, 1, 0),
+            Text = Info.Title,
+            TextSize = 20,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            Parent = TitleHolder,
+        })
+
+        if MoveIcon and Info.Draggable then
+            New("ImageLabel", {
+                AnchorPoint = Vector2.new(1, 0.5),
+                Image = MoveIcon.Url,
+                ImageColor3 = "OutlineColor",
+                ImageRectOffset = MoveIcon.ImageRectOffset,
+                ImageRectSize = MoveIcon.ImageRectSize,
+                Position = UDim2.new(1, -10, 0.5, 0),
+                Size = UDim2.fromOffset(28, 28),
+                SizeConstraint = Enum.SizeConstraint.RelativeYY,
+                Parent = TopBar,
+            })
+        end
+
+        --// Bottom Bar \\--
+        BottomBackground = New("Frame", {
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundColor3 = function()
+                return Library:GetBetterColor(Library.Scheme.BackgroundColor, 4)
+            end,
+            Position = UDim2.fromScale(0, 1),
+            Size = UDim2.new(1, 0, 0, 20 + Info.CornerRadius),
+            Parent = MainFrame
+        })
+        Library:MakeLine(MainFrame, {
+            AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.new(0, 0, 1, -20),
+            Size = UDim2.new(1, 0, 0, 1),
+        })
+
+        local BottomBar = New("Frame", {
+            AnchorPoint = Vector2.new(0, 1),
+            BackgroundTransparency = 1,
+            Position = UDim2.fromScale(0, 1),
+            Size = UDim2.new(1, 0, 0, 20),
+            Parent = MainFrame,
+        })
+        table.insert(
+            Library.Corners,
+            New("UICorner", {
+                CornerRadius = UDim.new(0, Info.CornerRadius),
+                Parent = BottomBackground,
+            })
+        )
+
+        --// Footer \\-
+        FooterLabel = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1),
+            Text = Info.Footer,
+            TextSize = 14,
+            TextTransparency = 0.5,
+            Parent = BottomBar,
+        })
+
+        --// Container \\--
+        Container = New("Frame", {
+            BackgroundColor3 = function()
+                return Library:GetBetterColor(Library.Scheme.BackgroundColor, -1)
+            end,
+            ClipsDescendants = true,
+            Name = "Container",
+            Position = UDim2.fromOffset(0, 49),
+            Size = UDim2.new(1, 0, 1, -70),
+            Visible = true,
+            Parent = MainFrame,
+        })
+        New("UIPadding", {
+            PaddingBottom = UDim.new(0, 0),
+            PaddingLeft = UDim.new(0, 1),
+            PaddingRight = UDim.new(0, 1),
+            PaddingTop = UDim.new(0, 0),
+            Parent = Container,
+        })
+
+        Library.ChangableWindowContainer = Container
+    end
+
+    --// Changable Window Table \\--
+    local ChangableWindow = {}
+
+    local function SetUICorner(UICorner, Corner, HalfCurrent, HalfValue, Value)
+        local Current = UICorner[Corner]
+        if Current.Offset == 0 and Current.Scale == 0 then
+            return
+        end
+
+        UICorner[Corner] = Current.Offset == HalfCurrent and HalfValue or Value
+    end
+
+    function ChangableWindow:CreateCanvas(Info)
+        Info = Library:Validate(Info, Templates.Canvas)
+
+        local CanvasContainer
+        
+        do
+            for _, Lines in Info.Lines do
+                Library:MakeLine(Container, Lines)
+            end
+
+            CanvasContainer = New("Frame", {
+                BackgroundTransparency = 1,
+                Name = "Canvas",
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(0.5, 0.5),
+                Size = UDim2.new(1, -20, 1, -20),
+                Visible = true,
+                Parent = Container,
+            })
+            New("UIListLayout", {
+                Padding = Info.Padding,
+                FillDirection = Info.FillDirection,
+                HorizontalAlignment = Info.HorizontalAlignment,
+                VerticalAlignment = Info.VerticalAlignment,
+                Parent = CanvasContainer
+            })
+        end
+
+        local Canvas = {
+            Type = "Canvas",
+
+            Visible = true,
+
+            Container = CanvasContainer,
+            Elements = {}
+        }
+
+        function Canvas:AddSplit(...)
+            local function GetInfo(...)
+                local Info = {}
+
+                local Params = select(1, ...)
+                local Second = select(2, ...)
+
+                if typeof(Params) == "table" then
+                    Info.Size = Params.Size or UDim2.fromScale(0.5, 1)
+                    Info.VerticalAlignment = Params.VerticalAlignment or Enum.VerticalAlignment.Center
+                else
+                    Info.Size = Params or UDim2.fromScale(0.5, 1)
+                    Info.VerticalAlignment = Second or Enum.VerticalAlignment.Center
+                end
+
+                return Info
+            end
+
+            local Info = GetInfo(...)
+
+            local SplitFrame
+
+            do
+                SplitFrame = New("Frame", {
+                    BackgroundTransparency = 1,
+                    Size = Info.Size,
+                    Parent = CanvasContainer,
+                })
+                New("UIListLayout", {
+                    Padding = UDim.new(0, 8),
+                    VerticalAlignment = Info.VerticalAlignment,
+                    Parent = SplitFrame,
+                })
+                New("UIFlexItem", {
+                    FlexMode = "Fill",
+                    Parent = SplitFrame,
+                })
+            end
+
+            local Split = {
+                Type = "Split",
+
+                Container = SplitFrame,
+                Elements = {}
+            }
+
+            function Split:AddScrollingFrame()
+                local ScrollingFrameContainer
+
+                do
+                    ScrollingFrameContainer = New("ScrollingFrame", {
+                        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                        BackgroundTransparency = 1,
+                        BottomImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+                        CanvasSize = UDim2.fromScale(0, 0),
+                        ScrollBarImageColor3 = "OutlineColor",
+                        ScrollBarThickness = 2,
+                        TopImage = "rbxasset://textures/ui/Scroll/scroll-middle.png",
+                        Position = UDim2.fromScale(0, 0),
+                        Size = UDim2.fromScale(1, 1),
+                        Visible = true,
+                        Parent = SplitFrame,
+                    })
+                end
+
+                local ScrollingFrame = {
+                    Type = "ScrollingFrame",
+
+                    Container = ScrollingFrameContainer,
+                    Elements = {}
+                }
+
+                function ScrollingFrame:Resize()
+                end
+
+                setmetatable(ScrollingFrame, BaseGroupbox)
+                return ScrollingFrame
+            end
+
+            function Split:Resize()
+            end
+
+            setmetatable(Split, BaseGroupbox)
+            return Split
+        end
+
+        function Canvas:AddLine(Info)
+            Library:MakeLine(Container, Info)
+        end
+
+        function Canvas:SetVisible(Visible: boolean)
+            Canvas.Visible = Visible
+            CanvasContainer.Visible = Visible
+        end
+
+        setmetatable(Canvas, BaseGroupbox)
+        return Canvas
+    end
+
+    function ChangableWindow:ChangeTitle(Title)
+        assert(typeof(Title) == "string", "Expected string for Title got: " .. typeof(Title))
+
+        WindowTitle.Text = Title
+        Info.Title = Title
+    end
+
+    function ChangableWindow:SetFooter(Footer: string)
+        assert(typeof(Footer) == "string", "Expected string for Footer got: " .. typeof(Footer))
+
+        FooterLabel.Text = Footer
+        Info.Footer = Footer
+    end
+
+    function ChangableWindow:SetCornerRadius(Radius: number)
+        assert(typeof(Radius) == "number", "Expected number for Radius got: " .. typeof(Radius))
+        Radius = math.min(Radius, 20)
+
+        local RadiusHalf = UDim.new(0, Radius / 2)
+        local RadiusUDim = UDim.new(0, Radius)
+        local HalfCurrent = Library.CornerRadius / 2
+
+        for _, UICorner in Library.Corners do
+            if UICorner.CornerRadius.Offset == HalfCurrent then
+                UICorner.CornerRadius = RadiusHalf
+            else
+                UICorner.CornerRadius = RadiusUDim
+            end
+        end
+
+        for _, UICorner in Library.SpecificCorners do
+            SetUICorner(UICorner, "TopRightRadius", HalfCurrent, RadiusHalf, RadiusUDim)
+            SetUICorner(UICorner, "TopLeftRadius", HalfCurrent, RadiusHalf, RadiusUDim)
+            SetUICorner(UICorner, "BottomRightRadius", HalfCurrent, RadiusHalf, RadiusUDim)
+            SetUICorner(UICorner, "BottomLeftRadius", HalfCurrent, RadiusHalf, RadiusUDim)
+        end
+
+        Library.CornerRadius = Radius
+        Info.CornerRadius = Radius
+        BottomBackground.Size = UDim2.new(1, 0, 0, 20 + Radius)
+    end
+
+    function ChangableWindow:SetAlwaysOnTop(Enabled: boolean)
+        Info.AlwaysOnTop = Enabled == true
+        SetAlwaysOnTop(Library.ScreenGui, Info.AlwaysOnTop)
+    end
+
+    function ChangableWindow:Toggle(Value: boolean?)
+        if Library.ActiveLoading then
+            if Value == true then
+                return
+            end
+
+            if not Library.Toggled then
+                return
+            end
+        end
+
+        if typeof(Value) == "boolean" then
+            Library.Toggled = Value
+        else
+            Library.Toggled = not Library.Toggled
+        end
+
+        MainFrame.Visible = Library.Toggled
+
+        if Info.UnlockMouseWhileOpen then
+            ModalElement.Modal = Library.Toggled
+        end
+
+        if Library.Toggled and not Library.IsMobile then
+            local OldMouseIconEnabled = UserInputService.MouseIconEnabled
+            local ShowCursorBinding = Library.ShowCursorBinding
+            pcall(function()
+                RunService:UnbindFromRenderStep(ShowCursorBinding)
+            end)
+            RunService:BindToRenderStep(ShowCursorBinding, Enum.RenderPriority.Last.Value, function()
+                UserInputService.MouseIconEnabled = not Library.ShowCustomCursor
+
+                Cursor.Position = UDim2.fromOffset(Mouse.X, Mouse.Y)
+                Cursor.Visible = Library.ShowCustomCursor
+
+                if not (Library.Toggled and ScreenGui and ScreenGui.Parent) then
+                    UserInputService.MouseIconEnabled = OldMouseIconEnabled
+                    Cursor.Visible = false
+                    RunService:UnbindFromRenderStep(ShowCursorBinding)
+                end
+            end)
+        elseif not Library.Toggled then
+            TooltipLabel.Visible = false
+
+            for _, Option in Library.Options do
+                if Option.Type == "ColorPicker" then
+                    Option.ColorMenu:Close()
+                    Option.ContextMenu:Close()
+                elseif Option.Type == "Dropdown" or Option.Type == "KeyPicker" then
+                    Option.Menu:Close()
+                end
+            end
+        end
+    end
+
+    --// Execution \\--
+
+    Library:GiveSignal(UserInputService.InputBegan:Connect(function(Input: InputObject)
+        if Library.Unloaded then
+            return
+        end
+
+        if UserInputService:GetFocusedTextBox() then
+            return
+        end
+    end))
+
+    ChangableWindow:SetAlwaysOnTop(Templates.ChangableWindow.AlwaysOnTop)
+
+    if Info.AutoShow and not Library.ActiveLoading then
+        task.spawn(ChangableWindow.Toggle)
+    end
+
+    Library:GiveSignal(UserInputService.WindowFocused:Connect(function()
+        Library.IsRobloxFocused = true
+    end))
+    Library:GiveSignal(UserInputService.WindowFocusReleased:Connect(function()
+        Library.IsRobloxFocused = false
+    end))
+
+    Library.ChangableWindow = ChangableWindow
+    return ChangableWindow
+end
+
 function Library:CreateLoading(LoadingInfo)
     if Library.ActiveLoading then
         warn("Loading GUI already exists, you cannot create multiple Loading GUIs.")
@@ -13198,6 +13724,8 @@ function Library:Unload()
     Library.Toggle = function(...) end
     Library.ScreenGui = nil
     Library.WindowContainer = nil
+    Library.ChangableWindow = nil
+    Library.ChangableWindowContainer = nil
     Library.KeybindFrame = nil
     Library.KeybindContainer = nil
 
