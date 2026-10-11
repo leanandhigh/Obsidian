@@ -13973,6 +13973,7 @@ function Library:CreateFarmStats(Info)
         },
         Connections = {},
         MaterialRows = {},
+        MaterialRefs = {},
         StatValues = {},
         StatCaptions = {},
     }
@@ -14415,10 +14416,55 @@ function Library:CreateFarmStats(Info)
         table.clear(Farm.MaterialRows)
     end
 
-    local function RefreshMaterials()
-        ClearMaterials()
+    local function PaintGain(Pill, GainLabel, Gain)
+        GainLabel.Text = (Gain > 0 and "+" or "") .. FarmShared.Compact(Gain)
 
+        local Entry = Library.Registry[Pill] or {}
+
+        if Gain > 0 then
+            Entry.BackgroundColor3 = nil
+            Pill.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+            Pill.BackgroundTransparency = 0.82
+            FarmShared.TextColor(GainLabel, Color3.fromRGB(110, 225, 145))
+        else
+            Entry.BackgroundColor3 = "OutlineColor"
+            Pill.BackgroundColor3 = Library.Scheme.OutlineColor
+            Pill.BackgroundTransparency = 0.2
+            FarmShared.TextColor(GainLabel, Gain < 0 and Color3.fromRGB(230, 95, 95) or Dim(0.5))
+        end
+
+        Library.Registry[Pill] = Entry
+    end
+
+    local function RefreshMaterials()
         local List = Farm.Data.Materials or {}
+
+        -- Same materials in the same order: only change the numbers (no flicker / rebuild)
+        local Same = #List == #Farm.MaterialRows and #List > 0
+
+        if Same then
+            for Index, Mat in ipairs(List) do
+                local Refs = Farm.MaterialRefs[Index]
+
+                if not Refs or Refs.Key ~= tostring(Mat.Name) .. "|" .. tostring(Mat.Icon) then
+                    Same = false
+                    break
+                end
+            end
+        end
+
+        if Same then
+            for Index, Mat in ipairs(List) do
+                local Refs = Farm.MaterialRefs[Index]
+                Refs.Count.Text = FarmShared.Number(Mat.Count or 0) .. " owned"
+                PaintGain(Refs.Pill, Refs.Gain, tonumber(Mat.Gain) or 0)
+            end
+
+            return
+        end
+
+        ClearMaterials()
+        Farm.MaterialRefs = {}
 
         for Index, Mat in ipairs(List) do
             local Tile = New("Frame", {
@@ -14479,19 +14525,12 @@ function Library:CreateFarmStats(Info)
                 BackgroundTransparency = 1,
                 Size = UDim2.fromOffset(0, 22),
                 AutomaticSize = Enum.AutomaticSize.X,
-                Text = (Gain > 0 and "+" or "") .. FarmShared.Compact(Gain),
+                Text = "",
                 TextSize = 12,
                 ZIndex = 6,
                 Parent = Pill,
             })
-
-            if Gain > 0 then
-                FarmShared.TextColor(GainLabel, Color3.fromRGB(110, 225, 145))
-            elseif Gain < 0 then
-                FarmShared.TextColor(GainLabel, Color3.fromRGB(230, 95, 95))
-            else
-                FarmShared.TextColor(GainLabel, Dim(0.5))
-            end
+            PaintGain(Pill, GainLabel, Gain)
 
             -- Name + count sit between the icon and the pill
             New("TextLabel", {
@@ -14505,7 +14544,7 @@ function Library:CreateFarmStats(Info)
                 ZIndex = 5,
                 Parent = Inner,
             })
-            New("TextLabel", {
+            local CountLabel = New("TextLabel", {
                 BackgroundTransparency = 1,
                 Position = UDim2.fromOffset(48, 21),
                 Size = UDim2.new(1, -104, 0, 16),
@@ -14519,6 +14558,7 @@ function Library:CreateFarmStats(Info)
             })
 
             Farm.MaterialRows[Index] = Tile
+            Farm.MaterialRefs[Index] = { Key = tostring(Mat.Name) .. "|" .. tostring(Mat.Icon), Count = CountLabel, Pill = Pill, Gain = GainLabel }
         end
 
         EmptyLabel.Visible = #List == 0
@@ -15020,6 +15060,33 @@ function Library:CreateFarmHud(Info)
     end
 
     function Hud:SetItems(List)
+        List = List or {}
+
+        -- Same items in the same order: update the amounts only
+        if Hud.ItemRefs and #Hud.ItemRefs == math.min(#List, Hud.MaxItems) and #List <= Hud.MaxItems and #List > 0 then
+            local Same = true
+
+            for Index, Item in ipairs(List) do
+                if Hud.ItemRefs[Index].Key ~= tostring(Item.Name or Item[1]) .. "|" .. tostring(Item.Icon) then
+                    Same = false
+                    break
+                end
+            end
+
+            if Same then
+                for Index, Item in ipairs(List) do
+                    local Amount = tonumber(Item.Amount or Item[2]) or 0
+                    local Label = Hud.ItemRefs[Index].Value
+                    Label.Text = (Amount > 0 and "+" or "") .. FarmShared.Compact(Amount)
+                    FarmShared.TextColor(Label, Amount > 0 and Color3.fromRGB(110, 225, 145) or "FontColor")
+                end
+
+                return
+            end
+        end
+
+        Hud.ItemRefs = {}
+
         for _, Row in Hud.ItemRows do
             pcall(function()
                 Row:Destroy()
@@ -15080,6 +15147,7 @@ function Library:CreateFarmHud(Info)
             local ValueLabel = ValueGroup(Holder, 5)
             ValueLabel.Text = (Amount > 0 and "+" or "") .. FarmShared.Compact(Amount)
             SetValueColor(ValueLabel, Amount > 0 and Color3.fromRGB(110, 225, 145) or nil)
+            Hud.ItemRefs[Index] = { Key = tostring(Item.Name or Item[1]) .. "|" .. tostring(Item.Icon), Value = ValueLabel }
 
             table.insert(Hud.ItemRows, Holder)
         end
