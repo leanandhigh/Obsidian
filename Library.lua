@@ -9041,8 +9041,16 @@ function Library:SetNotifySide(Side: string)
 end
 
 Library.Notify = function(...)
+    -- Works as Library:Notify(...) and Library.Notify(...). Called with ":" the first
+    -- argument is the library itself, which used to show up as a "nil / nil" notification.
+    local Args = table.pack(...)
+
+    if Args[1] == Library then
+        Args = table.pack(select(2, ...))
+    end
+
     local Data = {}
-    local Info = select(1, ...)
+    local Info = Args[1]
 
     if typeof(Info) == "table" then
         Data.Title = tostring(Info.Title)
@@ -9064,9 +9072,9 @@ Library.Notify = function(...)
         Data.Volume = tonumber(Info.Volume) or 3
     else
         Data.Description = tostring(Info)
-        Data.Time = select(2, ...) or 5
-        Data.SoundId = select(3, ...)
-        Data.Volume = select(4, ...) or 3
+        Data.Time = Args[2] or 5
+        Data.SoundId = Args[3]
+        Data.Volume = Args[4] or 3
     end
     Data.Destroyed = false
 
@@ -14031,7 +14039,6 @@ function Library:CreateFarmStats(Info)
     })
     Corner(Card, 10)
     Library:AddOutline(Card)
-    FarmShared.Brackets(Card, 18, 7, 3)
 
     if Info.Glow ~= false then
         Farm.GlowImage = FarmShared.Glow(Card, 26)
