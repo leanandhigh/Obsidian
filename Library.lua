@@ -14276,7 +14276,6 @@ function Library:CreateFarmStats(Info)
         })
         Corner(Tile, 8)
         Library:AddOutline(Tile)
-        FarmShared.Spine(Tile, 12, 5)
 
         local Inner = New("Frame", {
             BackgroundTransparency = 1,
@@ -14795,7 +14794,6 @@ function Library:CreateFarmHud(Info)
     })
     Corner(Frame, 8)
     Library:AddOutline(Frame)
-    FarmShared.Spine(Frame, 12, 3)
     Hud.Frame = Frame
 
     if Info.Glow ~= false then
