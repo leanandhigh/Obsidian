@@ -13648,6 +13648,525 @@ Library:GiveSignal(Players.PlayerRemoving:Connect(OnPlayerChange))
 Library:GiveSignal(Teams.ChildAdded:Connect(OnTeamChange))
 Library:GiveSignal(Teams.ChildRemoved:Connect(OnTeamChange))
 
+
+function Library:CreateFarmStats(Info)
+    Info = Info or {}
+
+    if Library.ActiveFarmStats and Library.ActiveFarmStats.Destroy then
+        pcall(function()
+            Library.ActiveFarmStats:Destroy()
+        end)
+        Library.ActiveFarmStats = nil
+    end
+
+    local Farm = {
+        Title = Info.Title or "FARM",
+        Icon = Info.Icon or (Library.Window and Library.Window.Icon) or 121622919214733,
+        Visible = false,
+        SessionStart = os.clock(),
+        Data = {
+            Level = Info.Level or 0,
+            TotalWen = Info.TotalWen or 0,
+            AllInventory = Info.AllInventory or 0,
+            Reputation = Info.Reputation or 0,
+            Status = Info.Status or "Online",
+            Materials = Info.Materials or {},
+        },
+        Connections = {},
+        MaterialRows = {},
+    }
+
+    local function FormatNumber(n)
+        n = tonumber(n) or 0
+        local sign = n < 0 and "-" or ""
+        n = math.abs(math.floor(n))
+        local s = tostring(n)
+        while true do
+            local k
+            s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+            if k == 0 then break end
+        end
+        return sign .. s
+    end
+
+    local function FormatTime(seconds)
+        seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+        local h = math.floor(seconds / 3600)
+        local m = math.floor((seconds % 3600) / 60)
+        local s = seconds % 60
+        return string.format("%02d:%02d:%02d", h, m, s)
+    end
+
+    local function FormatDuration(seconds)
+        seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+        local h = math.floor(seconds / 3600)
+        local m = math.floor((seconds % 3600) / 60)
+        local s = seconds % 60
+        if h > 0 then
+            return string.format("%dh %dm %ds", h, m, s)
+        end
+        if m > 0 then
+            return string.format("%dm %ds", m, s)
+        end
+        return string.format("%ds", s)
+    end
+
+    local FarmGui = New("ScreenGui", {
+        Name = "ObsidianFarmStats",
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        ZIndexBehavior = Enum.ZIndexBehavior.Global,
+        DisplayOrder = 1000,
+        Enabled = false,
+    })
+    ParentUI(FarmGui)
+    Farm.ScreenGui = FarmGui
+
+    local Backdrop = New("Frame", {
+        Name = "Backdrop",
+        BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 0,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 1,
+        Parent = FarmGui,
+    })
+
+    local Content = New("Frame", {
+        Name = "Content",
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 2,
+        Parent = FarmGui,
+    })
+
+    local Center = New("Frame", {
+        Name = "Center",
+        BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.48),
+        Size = UDim2.fromOffset(720, 520),
+        ZIndex = 3,
+        Parent = Content,
+    })
+
+    -- Logo uses same icon as window
+    local IconData = Library:GetCustomIcon(Farm.Icon)
+    local Logo = New("ImageLabel", {
+        Name = "Logo",
+        BackgroundTransparency = 1,
+        Image = IconData and IconData.Url or string.format("rbxassetid://%s", tostring(Farm.Icon)),
+        ImageRectOffset = IconData and IconData.ImageRectOffset or Vector2.zero,
+        ImageRectSize = IconData and IconData.ImageRectSize or Vector2.zero,
+        Size = UDim2.fromOffset(72, 72),
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 0),
+        ZIndex = 4,
+        Parent = Center,
+    })
+
+    local TimerLabel = New("TextLabel", {
+        Name = "Timer",
+        BackgroundTransparency = 1,
+        Text = "00:00:00",
+        TextSize = 56,
+        TextColor3 = "FontColor",
+        FontFace = "Font",
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 90),
+        Size = UDim2.new(1, 0, 0, 64),
+        ZIndex = 4,
+        Parent = Center,
+    })
+
+    local StatusRow = New("Frame", {
+        Name = "StatusRow",
+        BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 160),
+        Size = UDim2.new(0, 280, 0, 28),
+        ZIndex = 4,
+        Parent = Center,
+    })
+    New("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 12),
+        Parent = StatusRow,
+    })
+
+    local StatusPill = New("Frame", {
+        Name = "StatusPill",
+        BackgroundColor3 = "MainColor",
+        BorderSizePixel = 0,
+        Size = UDim2.fromOffset(96, 26),
+        ZIndex = 5,
+        Parent = StatusRow,
+    })
+    table.insert(Library.Corners, New("UICorner", {
+        CornerRadius = UDim.new(1, 0),
+        Parent = StatusPill,
+    }))
+    Library:AddOutline(StatusPill)
+
+    local StatusInner = New("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        Parent = StatusPill,
+    })
+    New("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 6),
+        Parent = StatusInner,
+    })
+    New("UIPadding", {
+        PaddingLeft = UDim.new(0, 8),
+        PaddingRight = UDim.new(0, 8),
+        Parent = StatusInner,
+    })
+
+    local StatusDot = New("Frame", {
+        Name = "Dot",
+        BackgroundColor3 = Color3.fromRGB(80, 200, 120),
+        BorderSizePixel = 0,
+        Size = UDim2.fromOffset(8, 8),
+        ZIndex = 6,
+        Parent = StatusInner,
+    })
+    table.insert(Library.Corners, New("UICorner", {
+        CornerRadius = UDim.new(1, 0),
+        Parent = StatusDot,
+    }))
+
+    local StatusLabel = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Text = "Online",
+        TextSize = 13,
+        TextColor3 = "FontColor",
+        FontFace = "Font",
+        AutomaticSize = Enum.AutomaticSize.X,
+        Size = UDim2.fromOffset(0, 20),
+        ZIndex = 6,
+        Parent = StatusInner,
+    })
+
+    local SessionLabel = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Text = "0s",
+        TextSize = 13,
+        TextColor3 = function()
+            local H, S, V = Library.Scheme.FontColor:ToHSV()
+            return Color3.fromHSV(H, S, V * 0.55)
+        end,
+        FontFace = "Font",
+        AutomaticSize = Enum.AutomaticSize.X,
+        Size = UDim2.fromOffset(0, 20),
+        ZIndex = 5,
+        Parent = StatusRow,
+    })
+
+    local StatsRow = New("Frame", {
+        Name = "StatsRow",
+        BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 210),
+        Size = UDim2.new(1, -40, 0, 56),
+        ZIndex = 4,
+        Parent = Center,
+    })
+    New("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 40),
+        Parent = StatsRow,
+    })
+
+    local function MakeStat(LabelText)
+        local Holder = New("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromOffset(130, 56),
+            ZIndex = 5,
+            Parent = StatsRow,
+        })
+        local Value = New("TextLabel", {
+            Name = "Value",
+            BackgroundTransparency = 1,
+            Text = "0",
+            TextSize = 22,
+            TextColor3 = "FontColor",
+            FontFace = "Font",
+            Size = UDim2.new(1, 0, 0, 28),
+            ZIndex = 6,
+            Parent = Holder,
+        })
+        New("TextLabel", {
+            Name = "Label",
+            BackgroundTransparency = 1,
+            Text = LabelText,
+            TextSize = 12,
+            TextColor3 = function()
+                local H, S, V = Library.Scheme.FontColor:ToHSV()
+                return Color3.fromHSV(H, S, V * 0.5)
+            end,
+            FontFace = "Font",
+            Size = UDim2.new(1, 0, 0, 18),
+            Position = UDim2.fromOffset(0, 30),
+            ZIndex = 6,
+            Parent = Holder,
+        })
+        return Value
+    end
+
+    local LevelValue = MakeStat("Level")
+    local WenValue = MakeStat("Total Wen")
+    local InventoryValue = MakeStat("All Inventory")
+    local ReputationValue = MakeStat("Reputation")
+
+    local MaterialsFrame = New("Frame", {
+        Name = "Materials",
+        BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 290),
+        Size = UDim2.new(1, -60, 0, 140),
+        ZIndex = 4,
+        Parent = Center,
+    })
+    New("UIGridLayout", {
+        CellSize = UDim2.fromOffset(200, 42),
+        CellPadding = UDim2.fromOffset(24, 14),
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+        VerticalAlignment = Enum.VerticalAlignment.Top,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = MaterialsFrame,
+    })
+
+    local CloseButton = New("TextButton", {
+        Name = "Close",
+        AutoButtonColor = false,
+        BackgroundColor3 = "MainColor",
+        BorderSizePixel = 0,
+        Text = "Close",
+        TextSize = 14,
+        TextColor3 = "FontColor",
+        FontFace = "Font",
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, 460),
+        Size = UDim2.fromOffset(140, 36),
+        ZIndex = 5,
+        Parent = Center,
+    })
+    table.insert(Library.Corners, New("UICorner", {
+        CornerRadius = UDim.new(0, math.max(4, math.floor(Library.CornerRadius / 2))),
+        Parent = CloseButton,
+    }))
+    Library:AddOutline(CloseButton)
+
+    CloseButton.MouseEnter:Connect(function()
+        TweenService:Create(CloseButton, Library.TweenInfo, {
+            BackgroundColor3 = Library:GetBetterColor(Library.Scheme.MainColor, 10)
+        }):Play()
+    end)
+    CloseButton.MouseLeave:Connect(function()
+        TweenService:Create(CloseButton, Library.TweenInfo, {
+            BackgroundColor3 = Library.Scheme.MainColor
+        }):Play()
+    end)
+
+    local function ClearMaterials()
+        for _, Row in pairs(Farm.MaterialRows) do
+            if Row then
+                pcall(function() Row:Destroy() end)
+            end
+        end
+        table.clear(Farm.MaterialRows)
+    end
+
+    local function RefreshMaterials()
+        ClearMaterials()
+        for i, Mat in ipairs(Farm.Data.Materials or {}) do
+            local Row = New("Frame", {
+                Name = "Mat_" .. i,
+                BackgroundTransparency = 1,
+                Size = UDim2.fromOffset(200, 42),
+                LayoutOrder = i,
+                ZIndex = 5,
+                Parent = MaterialsFrame,
+            })
+
+            local MatIcon = Mat.Icon or Farm.Icon
+            local MatIconData = Library:GetCustomIcon(MatIcon)
+            New("ImageLabel", {
+                Name = "Icon",
+                BackgroundTransparency = 1,
+                Image = MatIconData and MatIconData.Url or string.format("rbxassetid://%s", tostring(MatIcon)),
+                ImageRectOffset = MatIconData and MatIconData.ImageRectOffset or Vector2.zero,
+                ImageRectSize = MatIconData and MatIconData.ImageRectSize or Vector2.zero,
+                Size = UDim2.fromOffset(28, 28),
+                Position = UDim2.fromOffset(0, 6),
+                ZIndex = 6,
+                Parent = Row,
+            })
+
+            local Gain = tonumber(Mat.Gain) or 0
+            local GainText = (Gain >= 0 and "+" or "") .. tostring(Gain)
+            local GainColor = Gain > 0 and Color3.fromRGB(80, 200, 120)
+                or (Gain < 0 and Color3.fromRGB(220, 80, 80) or Color3.fromRGB(140, 140, 140))
+
+            New("TextLabel", {
+                Name = "Gain",
+                BackgroundTransparency = 1,
+                Text = GainText,
+                TextSize = 12,
+                TextColor3 = GainColor,
+                FontFace = "Font",
+                Position = UDim2.fromOffset(36, 2),
+                Size = UDim2.fromOffset(36, 16),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = 6,
+                Parent = Row,
+            })
+
+            New("TextLabel", {
+                Name = "Name",
+                BackgroundTransparency = 1,
+                Text = tostring(Mat.Name or "Item"),
+                TextSize = 13,
+                TextColor3 = "FontColor",
+                FontFace = "Font",
+                Position = UDim2.fromOffset(72, 2),
+                Size = UDim2.new(1, -76, 0, 18),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                ZIndex = 6,
+                Parent = Row,
+            })
+
+            New("TextLabel", {
+                Name = "Count",
+                BackgroundTransparency = 1,
+                Text = FormatNumber(Mat.Count or 0) .. " in inventory",
+                TextSize = 11,
+                TextColor3 = function()
+                    local H, S, V = Library.Scheme.FontColor:ToHSV()
+                    return Color3.fromHSV(H, S, V * 0.5)
+                end,
+                FontFace = "Font",
+                Position = UDim2.fromOffset(36, 20),
+                Size = UDim2.new(1, -40, 0, 16),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                ZIndex = 6,
+                Parent = Row,
+            })
+
+            Farm.MaterialRows[i] = Row
+        end
+    end
+
+    local function RefreshStats()
+        LevelValue.Text = FormatNumber(Farm.Data.Level)
+        WenValue.Text = FormatNumber(Farm.Data.TotalWen)
+        InventoryValue.Text = FormatNumber(Farm.Data.AllInventory)
+        ReputationValue.Text = FormatNumber(Farm.Data.Reputation)
+        StatusLabel.Text = tostring(Farm.Data.Status or "Online")
+        local Online = string.lower(tostring(Farm.Data.Status or "Online")) == "online"
+        StatusDot.BackgroundColor3 = Online and Color3.fromRGB(80, 200, 120) or Color3.fromRGB(200, 80, 80)
+    end
+
+    function Farm:SetVisible(Bool)
+        Farm.Visible = Bool and true or false
+        FarmGui.Enabled = Farm.Visible
+    end
+
+    function Farm:Toggle()
+        Farm:SetVisible(not Farm.Visible)
+    end
+
+    function Farm:ResetSession()
+        Farm.SessionStart = os.clock()
+    end
+
+    function Farm:SetStats(Stats)
+        Stats = Stats or {}
+        if Stats.Level ~= nil then Farm.Data.Level = Stats.Level end
+        if Stats.TotalWen ~= nil then Farm.Data.TotalWen = Stats.TotalWen end
+        if Stats.AllInventory ~= nil then Farm.Data.AllInventory = Stats.AllInventory end
+        if Stats.Reputation ~= nil then Farm.Data.Reputation = Stats.Reputation end
+        if Stats.Status ~= nil then Farm.Data.Status = Stats.Status end
+        RefreshStats()
+    end
+
+    function Farm:SetMaterials(List)
+        Farm.Data.Materials = List or {}
+        RefreshMaterials()
+    end
+
+    function Farm:UpdateMaterial(Name, Count, Gain, Icon)
+        local Found = false
+        for _, Mat in ipairs(Farm.Data.Materials) do
+            if Mat.Name == Name then
+                if Count ~= nil then Mat.Count = Count end
+                if Gain ~= nil then Mat.Gain = Gain end
+                if Icon ~= nil then Mat.Icon = Icon end
+                Found = true
+                break
+            end
+        end
+        if not Found then
+            table.insert(Farm.Data.Materials, {
+                Name = Name,
+                Count = Count or 0,
+                Gain = Gain or 0,
+                Icon = Icon or Farm.Icon,
+            })
+        end
+        RefreshMaterials()
+    end
+
+    function Farm:Destroy()
+        for _, Conn in ipairs(Farm.Connections) do
+            pcall(function() Conn:Disconnect() end)
+        end
+        table.clear(Farm.Connections)
+        ClearMaterials()
+        if FarmGui then
+            FarmGui:Destroy()
+            FarmGui = nil
+        end
+        if Library.ActiveFarmStats == Farm then
+            Library.ActiveFarmStats = nil
+        end
+    end
+
+    CloseButton.MouseButton1Click:Connect(function()
+        Farm:SetVisible(false)
+    end)
+
+    table.insert(Farm.Connections, RunService.RenderStepped:Connect(function()
+        if not Farm.Visible then
+            return
+        end
+        local Elapsed = os.clock() - Farm.SessionStart
+        TimerLabel.Text = FormatTime(Elapsed)
+        SessionLabel.Text = FormatDuration(Elapsed)
+    end))
+
+    RefreshStats()
+    RefreshMaterials()
+
+    if Info.Visible then
+        Farm:SetVisible(true)
+    end
+
+    Library.ActiveFarmStats = Farm
+    return Farm
+end
+
+
 function Library:Unload()
     Library.Unloaded = true
 
@@ -13688,6 +14207,13 @@ function Library:Unload()
 
     if Library.ActiveLoading then
         Library.ActiveLoading:Destroy()
+    end
+
+    if Library.ActiveFarmStats then
+        pcall(function()
+            Library.ActiveFarmStats:Destroy()
+        end)
+        Library.ActiveFarmStats = nil
     end
 
     if ScreenGui then
