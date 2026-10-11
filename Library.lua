@@ -13878,6 +13878,22 @@ do
         return Body:GetPropertyChangedSignal("AbsoluteSize"):Connect(Update)
     end
 
+    -- Same accent glow the main window uses, behind a frame
+    function FarmShared.Glow(Parent: GuiObject, Spread: number)
+        return New("ImageLabel", {
+            Name = "Glow",
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(-Spread, -Spread),
+            Size = UDim2.new(1, Spread * 2, 1, Spread * 2),
+            ZIndex = math.max(Parent.ZIndex - 1, 0),
+            Image = CustomImageManager.GetAsset("Glow"),
+            ImageColor3 = function()
+                return Library:GetBetterColor(Library.Scheme.AccentColor, -1)
+            end,
+            Parent = Parent,
+        })
+    end
+
     function FarmShared.Gui(Name: string, DisplayOrder: number)
         local Gui = New("ScreenGui", {
             Name = Name,
@@ -13904,6 +13920,8 @@ end
         Level = 225, TotalWen = 8433620, AllInventory = 101891, Reputation = 33125,
         Labels = { TotalWen = "Money", AllInventory = "Materials", Reputation = "Gems" },
         Status = "Online", StatusColor = Color3?,            -- dot is green for "Online"
+        Glow = true,                                         -- accent glow behind the card
+        Disable3D = true, Keep3DOff = function() return false end,  -- 3D off while shown
         Footer = "text under the card",
         Visible = false,
         Materials = { { Name = "Ore", Count = 70, Gain = 2, Icon = id? }, ... },
@@ -13962,7 +13980,7 @@ function Library:CreateFarmStats(Info)
         Name = "Backdrop",
         BackgroundColor3 = Color3.new(0, 0, 0),
         Size = UDim2.fromScale(1, 1),
-        ZIndex = 1,
+        ZIndex = 0,
         Parent = FarmGui,
     })
 
@@ -13971,7 +13989,7 @@ function Library:CreateFarmStats(Info)
         Name = "Glow",
         BackgroundColor3 = "AccentColor",
         Size = UDim2.new(1, 0, 0.45, 0),
-        ZIndex = 1,
+        ZIndex = 0,
         Parent = Backdrop,
     })
     New("UIGradient", {
@@ -14014,7 +14032,10 @@ function Library:CreateFarmStats(Info)
     Corner(Card, 10)
     Library:AddOutline(Card)
     FarmShared.Brackets(Card, 18, 7, 3)
-    FarmShared.Spine(Card, 18, 4)
+
+    if Info.Glow ~= false then
+        Farm.GlowImage = FarmShared.Glow(Card, 26)
+    end
 
     local Body = New("Frame", {
         Name = "Body",
@@ -14527,12 +14548,44 @@ function Library:CreateFarmStats(Info)
         Scale.Scale = math.clamp(math.min((Viewport.X - 48) / 760, (Viewport.Y - 48) / Height), 0.45, 1)
     end
 
+    -- The screen is opaque, so the 3D world does not need drawing behind it (big FPS / CPU save).
+    -- Info.Disable3D = false keeps it drawing; Info.Keep3DOff() = true leaves it off on close
+    -- (for a hub that has its own "Disable 3D Rendering" setting).
+    local function Set3D(Enabled)
+        if Info.Disable3D == false then
+            return
+        end
+
+        if Enabled and type(Info.Keep3DOff) == "function" then
+            local Ok, Keep = pcall(Info.Keep3DOff)
+
+            if Ok and Keep then
+                return
+            end
+        end
+
+        pcall(function()
+            RunService:Set3dRenderingEnabled(Enabled)
+        end)
+    end
+
     function Farm:SetVisible(Bool)
+        local Was = Farm.Visible
+
         Farm.Visible = Bool and true or false
         FarmGui.Enabled = Farm.Visible
 
         if Farm.Visible then
             Fit()
+            Set3D(false)
+        elseif Was then
+            Set3D(true)
+        end
+    end
+
+    function Farm:SetGlow(State)
+        if Farm.GlowImage then
+            Farm.GlowImage.Visible = State and true or false
         end
     end
 
@@ -14611,6 +14664,10 @@ function Library:CreateFarmStats(Info)
     end
 
     function Farm:Destroy()
+        if Farm.Visible then
+            Set3D(true)
+        end
+
         for _, Conn in Farm.Connections do
             pcall(function()
                 Conn:Disconnect()
@@ -14740,6 +14797,10 @@ function Library:CreateFarmHud(Info)
     Library:AddOutline(Frame)
     FarmShared.Spine(Frame, 12, 3)
     Hud.Frame = Frame
+
+    if Info.Glow ~= false then
+        Hud.GlowImage = FarmShared.Glow(Frame, 18)
+    end
 
     local Body = New("Frame", {
         BackgroundTransparency = 1,
@@ -15062,6 +15123,12 @@ function Library:CreateFarmHud(Info)
 
     function Hud:Toggle()
         Hud:SetVisible(not Hud.Visible)
+    end
+
+    function Hud:SetGlow(State)
+        if Hud.GlowImage then
+            Hud.GlowImage.Visible = State and true or false
+        end
     end
 
     function Hud:Destroy()
