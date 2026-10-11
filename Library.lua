@@ -13649,6 +13649,268 @@ Library:GiveSignal(Teams.ChildAdded:Connect(OnTeamChange))
 Library:GiveSignal(Teams.ChildRemoved:Connect(OnTeamChange))
 
 
+--// Farm Stats + Farm HUD \\--
+-- Shared look: Scheme colours, the library font, an accent "spine" on every card and
+-- accent corner brackets on the black-screen card.
+local FarmShared = {}
+do
+    function FarmShared.Dim(Mult: number)
+        return function()
+            local H, S, V = Library.Scheme.FontColor:ToHSV()
+            return Color3.fromHSV(H, S, V * Mult)
+        end
+    end
+
+    function FarmShared.Corner(Parent: Instance, Radius: number)
+        return New("UICorner", {
+            CornerRadius = UDim.new(0, Radius),
+            Parent = Parent,
+        })
+    end
+
+    function FarmShared.Padding(Parent: Instance, Top: number, Right: number, Bottom: number, Left: number)
+        return New("UIPadding", {
+            PaddingTop = UDim.new(0, Top),
+            PaddingRight = UDim.new(0, Right),
+            PaddingBottom = UDim.new(0, Bottom),
+            PaddingLeft = UDim.new(0, Left),
+            Parent = Parent,
+        })
+    end
+
+    function FarmShared.Number(n)
+        n = tonumber(n)
+
+        if not n then
+            return "0"
+        end
+
+        local Sign = n < 0 and "-" or ""
+        n = math.abs(n)
+
+        if n >= 1e15 then
+            return Sign .. string.format("%.2e", n)
+        end
+
+        local Text = tostring(math.floor(n))
+
+        while true do
+            local Count
+            Text, Count = Text:gsub("^(%d+)(%d%d%d)", "%1,%2")
+
+            if Count == 0 then
+                break
+            end
+        end
+
+        return Sign .. Text
+    end
+
+    function FarmShared.Compact(n)
+        n = tonumber(n) or 0
+
+        local Abs = math.abs(n)
+        local Units = { { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "k" } }
+
+        for _, Unit in Units do
+            if Abs >= Unit[1] then
+                local Text = string.format("%.1f", n / Unit[1]):gsub("%.0$", "")
+                return Text .. Unit[2]
+            end
+        end
+
+        return tostring(math.floor(n + 0.5))
+    end
+
+    function FarmShared.Clock(Seconds)
+        Seconds = math.max(0, math.floor(tonumber(Seconds) or 0))
+
+        return string.format("%02d:%02d:%02d", math.floor(Seconds / 3600), math.floor(Seconds % 3600 / 60), Seconds % 60)
+    end
+
+    function FarmShared.Duration(Seconds)
+        Seconds = math.max(0, math.floor(tonumber(Seconds) or 0))
+
+        local H, M, S = math.floor(Seconds / 3600), math.floor(Seconds % 3600 / 60), Seconds % 60
+
+        if H > 0 then
+            return string.format("%dh %02dm", H, M)
+        elseif M > 0 then
+            return string.format("%dm %02ds", M, S)
+        end
+
+        return string.format("%ds", S)
+    end
+
+    function FarmShared.Icon(Icon)
+        if Icon == nil or Icon == "" then
+            return nil
+        end
+
+        local Data = Library:GetCustomIcon(Icon)
+
+        if Data and Data.Url then
+            return Data
+        end
+
+        local Text = tostring(Icon)
+
+        return {
+            Url = Text:find("^rbxasset") and Text or ("rbxassetid://" .. Text),
+            ImageRectOffset = Vector2.zero,
+            ImageRectSize = Vector2.zero,
+        }
+    end
+
+    -- A thin vertical accent bar that fades out downwards (the "spine" of every card)
+    function FarmShared.Spine(Parent: Instance, Inset: number, ZIndex: number)
+        local Spine = New("Frame", {
+            Name = "Spine",
+            BackgroundColor3 = "AccentColor",
+            Position = UDim2.fromOffset(0, Inset),
+            Size = UDim2.new(0, 3, 1, -Inset * 2),
+            ZIndex = ZIndex,
+            Parent = Parent,
+        })
+        FarmShared.Corner(Spine, 2)
+        New("UIGradient", {
+            Rotation = 90,
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0),
+                NumberSequenceKeypoint.new(1, 0.75),
+            }),
+            Parent = Spine,
+        })
+
+        return Spine
+    end
+
+    -- Accent L-brackets just outside each corner of a frame
+    function FarmShared.Brackets(Parent: Instance, Length: number, Gap: number, ZIndex: number)
+        local Corners = {
+            { Vector2.new(0, 0), UDim2.fromOffset(-Gap, -Gap) },
+            { Vector2.new(1, 0), UDim2.new(1, Gap, 0, -Gap) },
+            { Vector2.new(0, 1), UDim2.new(0, -Gap, 1, Gap) },
+            { Vector2.new(1, 1), UDim2.new(1, Gap, 1, Gap) },
+        }
+
+        for _, Corner in Corners do
+            local Anchor, Position = Corner[1], Corner[2]
+            local Holder = New("Frame", {
+                BackgroundTransparency = 1,
+                AnchorPoint = Anchor,
+                Position = Position,
+                Size = UDim2.fromOffset(Length, Length),
+                ZIndex = ZIndex,
+                Parent = Parent,
+            })
+
+            New("Frame", {
+                BackgroundColor3 = "AccentColor",
+                AnchorPoint = Vector2.new(Anchor.X, Anchor.Y),
+                Position = UDim2.fromScale(Anchor.X, Anchor.Y),
+                Size = UDim2.new(1, 0, 0, 2),
+                ZIndex = ZIndex,
+                Parent = Holder,
+            })
+            New("Frame", {
+                BackgroundColor3 = "AccentColor",
+                AnchorPoint = Vector2.new(Anchor.X, Anchor.Y),
+                Position = UDim2.fromScale(Anchor.X, Anchor.Y),
+                Size = UDim2.new(0, 2, 1, 0),
+                ZIndex = ZIndex,
+                Parent = Holder,
+            })
+        end
+    end
+
+    function FarmShared.Button(Parent: Instance, Text: string, Size: UDim2, TextSize: number, ZIndex: number)
+        local Button = New("TextButton", {
+            BackgroundColor3 = "MainColor",
+            Text = Text,
+            TextSize = TextSize,
+            Size = Size,
+            ZIndex = ZIndex,
+            Parent = Parent,
+        })
+        FarmShared.Corner(Button, 5)
+        Library:AddOutline(Button)
+
+        Button.MouseEnter:Connect(function()
+            TweenService:Create(Button, Library.TweenInfo, {
+                BackgroundColor3 = Library:GetBetterColor(Library.Scheme.MainColor, 12),
+            }):Play()
+        end)
+        Button.MouseLeave:Connect(function()
+            TweenService:Create(Button, Library.TweenInfo, {
+                BackgroundColor3 = Library.Scheme.MainColor,
+            }):Play()
+        end)
+
+        return Button
+    end
+
+    -- Sets a text colour: a Color3 stays fixed, a Scheme key / function follows the theme.
+    -- Only touches TextColor3 in the registry so the font keeps following the theme too.
+    function FarmShared.TextColor(Label: TextLabel, Value)
+        local Entry = Library.Registry[Label] or {}
+
+        if typeof(Value) == "Color3" then
+            Entry.TextColor3 = nil
+            Label.TextColor3 = Value
+        else
+            Entry.TextColor3 = Value
+            Label.TextColor3 = typeof(Value) == "function" and Value() or Library.Scheme[Value]
+        end
+
+        Library.Registry[Label] = Entry
+    end
+
+    -- Keeps a holder exactly as tall as its auto-sized body (scale-sized decorations such as
+    -- the spine and the corner brackets would otherwise feed back into AutomaticSize)
+    function FarmShared.FollowHeight(Holder: GuiObject, Body: GuiObject, GetScale: (() -> number)?, Width: UDim?)
+        local function Update()
+            local Factor = GetScale and GetScale() or 1
+            Holder.Size = UDim2.new(Width or Holder.Size.X, UDim.new(0, math.ceil(Body.AbsoluteSize.Y / math.max(Factor, 0.01))))
+        end
+
+        Update()
+        return Body:GetPropertyChangedSignal("AbsoluteSize"):Connect(Update)
+    end
+
+    function FarmShared.Gui(Name: string, DisplayOrder: number)
+        local Gui = New("ScreenGui", {
+            Name = Name,
+            ResetOnSpawn = false,
+            IgnoreGuiInset = true,
+            ZIndexBehavior = Enum.ZIndexBehavior.Global,
+            DisplayOrder = DisplayOrder,
+            Enabled = false,
+        })
+        ParentUI(Gui)
+
+        Gui.DescendantRemoving:Connect(function(Instance)
+            Library:RemoveFromRegistry(Instance)
+        end)
+
+        return Gui
+    end
+end
+
+--[[
+    Library:CreateFarmStats({
+        Title = "MTwin Hub", Subtitle = "Anime Zero",       -- header (Title defaults to the window title)
+        Icon = 121622919214733,                              -- defaults to the window icon
+        Level = 225, TotalWen = 8433620, AllInventory = 101891, Reputation = 33125,
+        Labels = { TotalWen = "Money", AllInventory = "Materials", Reputation = "Gems" },
+        Status = "Online", StatusColor = Color3?,            -- dot is green for "Online"
+        Footer = "text under the card",
+        Visible = false,
+        Materials = { { Name = "Ore", Count = 70, Gain = 2, Icon = id? }, ... },
+    })
+    Methods: SetVisible, Toggle, ResetSession, SetStats, SetMaterials, UpdateMaterial,
+             SetTitle, SetSubtitle, SetLabels, SetStatus, Destroy
+]]
 function Library:CreateFarmStats(Info)
     Info = Info or {}
 
@@ -13659,427 +13921,619 @@ function Library:CreateFarmStats(Info)
         Library.ActiveFarmStats = nil
     end
 
+    local Dim, Corner, Padding = FarmShared.Dim, FarmShared.Corner, FarmShared.Padding
+    local Window = Library.Window
+
     local Farm = {
-        Title = Info.Title or "FARM",
-        Icon = Info.Icon or (Library.Window and Library.Window.Icon) or 121622919214733,
+        Title = Info.Title or (Window and Window.Title) or "Farm",
+        Icon = Info.Icon or (Window and Window.Icon) or 121622919214733,
         Visible = false,
         SessionStart = os.clock(),
+        StartedAt = os.date("%H:%M"),
+        Labels = {
+            Level = "Level",
+            TotalWen = "Total Wen",
+            AllInventory = "All Inventory",
+            Reputation = "Reputation",
+        },
         Data = {
             Level = Info.Level or 0,
             TotalWen = Info.TotalWen or 0,
             AllInventory = Info.AllInventory or 0,
             Reputation = Info.Reputation or 0,
             Status = Info.Status or "Online",
+            StatusColor = Info.StatusColor,
             Materials = Info.Materials or {},
         },
         Connections = {},
         MaterialRows = {},
+        StatValues = {},
+        StatCaptions = {},
     }
 
-    local function FormatNumber(n)
-        n = tonumber(n) or 0
-        local sign = n < 0 and "-" or ""
-        n = math.abs(math.floor(n))
-        local s = tostring(n)
-        while true do
-            local k
-            s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
-            if k == 0 then break end
-        end
-        return sign .. s
+    for Key, Text in Info.Labels or {} do
+        Farm.Labels[Key] = Text
     end
 
-    local function FormatTime(seconds)
-        seconds = math.max(0, math.floor(tonumber(seconds) or 0))
-        local h = math.floor(seconds / 3600)
-        local m = math.floor((seconds % 3600) / 60)
-        local s = seconds % 60
-        return string.format("%02d:%02d:%02d", h, m, s)
-    end
-
-    local function FormatDuration(seconds)
-        seconds = math.max(0, math.floor(tonumber(seconds) or 0))
-        local h = math.floor(seconds / 3600)
-        local m = math.floor((seconds % 3600) / 60)
-        local s = seconds % 60
-        if h > 0 then
-            return string.format("%dh %dm %ds", h, m, s)
-        end
-        if m > 0 then
-            return string.format("%dm %ds", m, s)
-        end
-        return string.format("%ds", s)
-    end
-
-    local FarmGui = New("ScreenGui", {
-        Name = "ObsidianFarmStats",
-        ResetOnSpawn = false,
-        IgnoreGuiInset = true,
-        ZIndexBehavior = Enum.ZIndexBehavior.Global,
-        DisplayOrder = 1000,
-        Enabled = false,
-    })
-    ParentUI(FarmGui)
+    local FarmGui = FarmShared.Gui("ObsidianFarmStats", 1000)
     Farm.ScreenGui = FarmGui
 
     local Backdrop = New("Frame", {
         Name = "Backdrop",
         BackgroundColor3 = Color3.new(0, 0, 0),
-        BackgroundTransparency = 0,
-        BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1),
         ZIndex = 1,
         Parent = FarmGui,
     })
 
-    local Content = New("Frame", {
-        Name = "Content",
-        BackgroundTransparency = 1,
-        Size = UDim2.fromScale(1, 1),
-        ZIndex = 2,
-        Parent = FarmGui,
+    -- Faint accent glow along the top edge
+    local Glow = New("Frame", {
+        Name = "Glow",
+        BackgroundColor3 = "AccentColor",
+        Size = UDim2.new(1, 0, 0.45, 0),
+        ZIndex = 1,
+        Parent = Backdrop,
+    })
+    New("UIGradient", {
+        Rotation = 90,
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.86),
+            NumberSequenceKeypoint.new(1, 1),
+        }),
+        Parent = Glow,
     })
 
     local Center = New("Frame", {
         Name = "Center",
         BackgroundTransparency = 1,
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.48),
-        Size = UDim2.fromOffset(720, 520),
-        ZIndex = 3,
-        Parent = Content,
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(760, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        ZIndex = 2,
+        Parent = FarmGui,
     })
+    local Scale = New("UIScale", { Parent = Center })
 
-    -- Logo uses same icon as window
-    local IconData = Library:GetCustomIcon(Farm.Icon)
-    local Logo = New("ImageLabel", {
-        Name = "Logo",
-        BackgroundTransparency = 1,
-        Image = IconData and IconData.Url or string.format("rbxassetid://%s", tostring(Farm.Icon)),
-        ImageRectOffset = IconData and IconData.ImageRectOffset or Vector2.zero,
-        ImageRectSize = IconData and IconData.ImageRectSize or Vector2.zero,
-        Size = UDim2.fromOffset(72, 72),
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 0),
-        ZIndex = 4,
-        Parent = Center,
-    })
-
-    local TimerLabel = New("TextLabel", {
-        Name = "Timer",
-        BackgroundTransparency = 1,
-        Text = "00:00:00",
-        TextSize = 56,
-        TextColor3 = "FontColor",
-        FontFace = "Font",
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 90),
-        Size = UDim2.new(1, 0, 0, 64),
-        ZIndex = 4,
-        Parent = Center,
-    })
-
-    local StatusRow = New("Frame", {
-        Name = "StatusRow",
-        BackgroundTransparency = 1,
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 160),
-        Size = UDim2.new(0, 280, 0, 28),
-        ZIndex = 4,
-        Parent = Center,
-    })
     New("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
+        FillDirection = Enum.FillDirection.Vertical,
         HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, 12),
-        Parent = StatusRow,
+        Padding = UDim.new(0, 14),
+        Parent = Center,
+    })
+
+    -- The card: holder (no layout) so the corner brackets can sit outside it
+    local Card = New("Frame", {
+        Name = "Card",
+        BackgroundColor3 = "BackgroundColor",
+        Size = UDim2.new(1, 0, 0, 400),
+        LayoutOrder = 1,
+        ZIndex = 2,
+        Parent = Center,
+    })
+    Corner(Card, 10)
+    Library:AddOutline(Card)
+    FarmShared.Brackets(Card, 18, 7, 3)
+    FarmShared.Spine(Card, 18, 4)
+
+    local Body = New("Frame", {
+        Name = "Body",
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        ZIndex = 3,
+        Parent = Card,
+    })
+    Padding(Body, 24, 26, 24, 30)
+    New("UIListLayout", {
+        FillDirection = Enum.FillDirection.Vertical,
+        Padding = UDim.new(0, 20),
+        Parent = Body,
+    })
+    table.insert(Farm.Connections, FarmShared.FollowHeight(Card, Body, function()
+        return Scale.Scale
+    end, UDim.new(1, 0)))
+
+    --// Header: logo tile, title / subtitle, status pill
+    local Header = New("Frame", {
+        Name = "Header",
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 56),
+        LayoutOrder = 1,
+        ZIndex = 3,
+        Parent = Body,
+    })
+
+    local LogoTile = New("Frame", {
+        BackgroundColor3 = "MainColor",
+        Size = UDim2.fromOffset(56, 56),
+        ZIndex = 4,
+        Parent = Header,
+    })
+    Corner(LogoTile, 10)
+    New("UIStroke", {
+        Color = "AccentColor",
+        Transparency = 0.45,
+        Thickness = 1,
+        Parent = LogoTile,
+    })
+
+    local LogoData = FarmShared.Icon(Farm.Icon)
+    New("ImageLabel", {
+        Name = "Logo",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(40, 40),
+        Image = LogoData and LogoData.Url or "",
+        ImageRectOffset = LogoData and LogoData.ImageRectOffset or Vector2.zero,
+        ImageRectSize = LogoData and LogoData.ImageRectSize or Vector2.zero,
+        ScaleType = Enum.ScaleType.Fit,
+        ZIndex = 5,
+        Parent = LogoTile,
+    })
+
+    local TitleLabel = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(72, 6),
+        Size = UDim2.new(1, -260, 0, 24),
+        Text = Farm.Title,
+        TextSize = 20,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ZIndex = 4,
+        Parent = Header,
+    })
+
+    local SubtitleLabel = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(72, 32),
+        Size = UDim2.new(1, -260, 0, 18),
+        Text = Info.Subtitle or "Farm session",
+        TextSize = 13,
+        TextColor3 = Dim(0.55),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ZIndex = 4,
+        Parent = Header,
     })
 
     local StatusPill = New("Frame", {
         Name = "StatusPill",
         BackgroundColor3 = "MainColor",
-        BorderSizePixel = 0,
-        Size = UDim2.fromOffset(96, 26),
-        ZIndex = 5,
-        Parent = StatusRow,
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.fromScale(1, 0.5),
+        Size = UDim2.fromOffset(0, 30),
+        AutomaticSize = Enum.AutomaticSize.X,
+        ZIndex = 4,
+        Parent = Header,
     })
-    table.insert(Library.Corners, New("UICorner", {
-        CornerRadius = UDim.new(1, 0),
-        Parent = StatusPill,
-    }))
+    Corner(StatusPill, 15)
     Library:AddOutline(StatusPill)
-
-    local StatusInner = New("Frame", {
-        BackgroundTransparency = 1,
-        Size = UDim2.fromScale(1, 1),
-        Parent = StatusPill,
-    })
+    Padding(StatusPill, 0, 14, 0, 12)
     New("UIListLayout", {
         FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
         VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, 6),
-        Parent = StatusInner,
-    })
-    New("UIPadding", {
-        PaddingLeft = UDim.new(0, 8),
-        PaddingRight = UDim.new(0, 8),
-        Parent = StatusInner,
+        Padding = UDim.new(0, 8),
+        Parent = StatusPill,
     })
 
     local StatusDot = New("Frame", {
         Name = "Dot",
         BackgroundColor3 = Color3.fromRGB(80, 200, 120),
-        BorderSizePixel = 0,
         Size = UDim2.fromOffset(8, 8),
-        ZIndex = 6,
-        Parent = StatusInner,
+        LayoutOrder = 1,
+        ZIndex = 5,
+        Parent = StatusPill,
     })
-    table.insert(Library.Corners, New("UICorner", {
-        CornerRadius = UDim.new(1, 0),
-        Parent = StatusDot,
-    }))
+    Corner(StatusDot, 4)
 
     local StatusLabel = New("TextLabel", {
         BackgroundTransparency = 1,
+        Size = UDim2.fromOffset(0, 30),
+        AutomaticSize = Enum.AutomaticSize.X,
         Text = "Online",
         TextSize = 13,
-        TextColor3 = "FontColor",
-        FontFace = "Font",
-        AutomaticSize = Enum.AutomaticSize.X,
-        Size = UDim2.fromOffset(0, 20),
-        ZIndex = 6,
-        Parent = StatusInner,
-    })
-
-    local SessionLabel = New("TextLabel", {
-        BackgroundTransparency = 1,
-        Text = "0s",
-        TextSize = 13,
-        TextColor3 = function()
-            local H, S, V = Library.Scheme.FontColor:ToHSV()
-            return Color3.fromHSV(H, S, V * 0.55)
-        end,
-        FontFace = "Font",
-        AutomaticSize = Enum.AutomaticSize.X,
-        Size = UDim2.fromOffset(0, 20),
+        LayoutOrder = 2,
         ZIndex = 5,
-        Parent = StatusRow,
+        Parent = StatusPill,
     })
 
-    local StatsRow = New("Frame", {
-        Name = "StatsRow",
-        BackgroundTransparency = 1,
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 210),
-        Size = UDim2.new(1, -40, 0, 56),
+    --// Divider with a light that sweeps across it
+    local Divider = New("Frame", {
+        Name = "Divider",
+        BackgroundColor3 = "OutlineColor",
+        Size = UDim2.new(1, 0, 0, 1),
+        ClipsDescendants = true,
+        LayoutOrder = 2,
+        ZIndex = 3,
+        Parent = Body,
+    })
+    local Sweep = New("Frame", {
+        BackgroundColor3 = "AccentColor",
+        Position = UDim2.fromScale(-0.3, 0),
+        Size = UDim2.new(0.3, 0, 1, 0),
         ZIndex = 4,
-        Parent = Center,
+        Parent = Divider,
+    })
+    New("UIGradient", {
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 1),
+            NumberSequenceKeypoint.new(0.5, 0),
+            NumberSequenceKeypoint.new(1, 1),
+        }),
+        Parent = Sweep,
+    })
+
+    --// Timer row
+    local TimerRow = New("Frame", {
+        Name = "TimerRow",
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 82),
+        LayoutOrder = 3,
+        ZIndex = 3,
+        Parent = Body,
+    })
+
+    New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(0.6, 0, 0, 14),
+        Text = "SESSION TIME",
+        TextSize = 11,
+        TextColor3 = Dim(0.45),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 4,
+        Parent = TimerRow,
+    })
+
+    local TimerLabel = New("TextLabel", {
+        Name = "Timer",
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(-2, 16),
+        Size = UDim2.new(0.6, 0, 0, 64),
+        Text = "00:00:00",
+        TextSize = 60,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 4,
+        Parent = TimerRow,
+    })
+
+    local TimerMeta = New("Frame", {
+        BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(1, 1),
+        Position = UDim2.new(1, 0, 1, -8),
+        Size = UDim2.new(0.4, 0, 0, 40),
+        ZIndex = 4,
+        Parent = TimerRow,
     })
     New("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Center,
-        Padding = UDim.new(0, 40),
-        Parent = StatsRow,
+        FillDirection = Enum.FillDirection.Vertical,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        VerticalAlignment = Enum.VerticalAlignment.Bottom,
+        Padding = UDim.new(0, 4),
+        Parent = TimerMeta,
     })
 
-    local function MakeStat(LabelText)
-        local Holder = New("Frame", {
+    local function MetaLine(Order)
+        return New("TextLabel", {
             BackgroundTransparency = 1,
-            Size = UDim2.fromOffset(130, 56),
-            ZIndex = 5,
-            Parent = StatsRow,
-        })
-        local Value = New("TextLabel", {
-            Name = "Value",
-            BackgroundTransparency = 1,
-            Text = "0",
-            TextSize = 22,
-            TextColor3 = "FontColor",
-            FontFace = "Font",
-            Size = UDim2.new(1, 0, 0, 28),
-            ZIndex = 6,
-            Parent = Holder,
-        })
-        New("TextLabel", {
-            Name = "Label",
-            BackgroundTransparency = 1,
-            Text = LabelText,
+            Size = UDim2.new(1, 0, 0, 16),
+            Text = "",
             TextSize = 12,
-            TextColor3 = function()
-                local H, S, V = Library.Scheme.FontColor:ToHSV()
-                return Color3.fromHSV(H, S, V * 0.5)
-            end,
-            FontFace = "Font",
-            Size = UDim2.new(1, 0, 0, 18),
-            Position = UDim2.fromOffset(0, 30),
-            ZIndex = 6,
-            Parent = Holder,
+            TextColor3 = Dim(0.55),
+            TextXAlignment = Enum.TextXAlignment.Right,
+            LayoutOrder = Order,
+            ZIndex = 4,
+            Parent = TimerMeta,
         })
-        return Value
     end
 
-    local LevelValue = MakeStat("Level")
-    local WenValue = MakeStat("Total Wen")
-    local InventoryValue = MakeStat("All Inventory")
-    local ReputationValue = MakeStat("Reputation")
+    local StartedLabel = MetaLine(1)
+    local SessionLabel = MetaLine(2)
+
+    --// Stat tiles
+    local StatsGrid = New("Frame", {
+        Name = "Stats",
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 74),
+        LayoutOrder = 4,
+        ZIndex = 3,
+        Parent = Body,
+    })
+    New("UIGridLayout", {
+        CellSize = UDim2.new(0.25, -9, 1, 0),
+        CellPadding = UDim2.fromOffset(12, 0),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = StatsGrid,
+    })
+
+    for Order, Key in { "Level", "TotalWen", "AllInventory", "Reputation" } do
+        local Tile = New("Frame", {
+            BackgroundColor3 = "MainColor",
+            LayoutOrder = Order,
+            ZIndex = 4,
+            Parent = StatsGrid,
+        })
+        Corner(Tile, 8)
+        Library:AddOutline(Tile)
+        FarmShared.Spine(Tile, 12, 5)
+
+        local Inner = New("Frame", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1),
+            ZIndex = 5,
+            Parent = Tile,
+        })
+        Padding(Inner, 12, 12, 12, 16)
+
+        Farm.StatCaptions[Key] = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 14),
+            Text = string.upper(Farm.Labels[Key]),
+            TextSize = 11,
+            TextColor3 = Dim(0.5),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ZIndex = 5,
+            Parent = Inner,
+        })
+
+        Farm.StatValues[Key] = New("TextLabel", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.fromScale(0, 1),
+            Size = UDim2.new(1, 0, 0, 26),
+            Text = "0",
+            TextSize = 22,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ZIndex = 5,
+            Parent = Inner,
+        })
+    end
+
+    --// Materials
+    local MaterialsHead = New("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 14),
+        LayoutOrder = 5,
+        ZIndex = 3,
+        Parent = Body,
+    })
+    New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(0.5, 1),
+        Text = "MATERIALS",
+        TextSize = 11,
+        TextColor3 = Dim(0.45),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 4,
+        Parent = MaterialsHead,
+    })
+    local MaterialsCount = New("TextLabel", {
+        BackgroundTransparency = 1,
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.fromScale(1, 0),
+        Size = UDim2.fromScale(0.5, 1),
+        Text = "",
+        TextSize = 11,
+        TextColor3 = Dim(0.45),
+        TextXAlignment = Enum.TextXAlignment.Right,
+        ZIndex = 4,
+        Parent = MaterialsHead,
+    })
 
     local MaterialsFrame = New("Frame", {
         Name = "Materials",
         BackgroundTransparency = 1,
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 290),
-        Size = UDim2.new(1, -60, 0, 140),
-        ZIndex = 4,
-        Parent = Center,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        LayoutOrder = 6,
+        ZIndex = 3,
+        Parent = Body,
     })
     New("UIGridLayout", {
-        CellSize = UDim2.fromOffset(200, 42),
-        CellPadding = UDim2.fromOffset(24, 14),
-        FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Center,
-        VerticalAlignment = Enum.VerticalAlignment.Top,
+        CellSize = UDim2.new(1 / 3, -8, 0, 58),
+        CellPadding = UDim2.fromOffset(12, 12),
         SortOrder = Enum.SortOrder.LayoutOrder,
         Parent = MaterialsFrame,
     })
 
-    local CloseButton = New("TextButton", {
-        Name = "Close",
-        AutoButtonColor = false,
-        BackgroundColor3 = "MainColor",
-        BorderSizePixel = 0,
-        Text = "Close",
-        TextSize = 14,
-        TextColor3 = "FontColor",
-        FontFace = "Font",
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(0.5, 0, 0, 460),
-        Size = UDim2.fromOffset(140, 36),
-        ZIndex = 5,
+    local EmptyLabel = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 20),
+        Text = "No materials tracked yet",
+        TextSize = 13,
+        TextColor3 = Dim(0.45),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        LayoutOrder = 7,
+        Visible = false,
+        ZIndex = 4,
+        Parent = Body,
+    })
+
+    --// Under the card: hint + close
+    local Footer = New("Frame", {
+        Name = "Footer",
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 34),
+        LayoutOrder = 2,
+        ZIndex = 2,
         Parent = Center,
     })
-    table.insert(Library.Corners, New("UICorner", {
-        CornerRadius = UDim.new(0, math.max(4, math.floor(Library.CornerRadius / 2))),
-        Parent = CloseButton,
-    }))
-    Library:AddOutline(CloseButton)
+    New("TextLabel", {
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(4, 0),
+        Size = UDim2.new(1, -140, 1, 0),
+        Text = Info.Footer or "The script keeps running behind this screen",
+        TextSize = 12,
+        TextColor3 = Dim(0.4),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ZIndex = 3,
+        Parent = Footer,
+    })
 
-    CloseButton.MouseEnter:Connect(function()
-        TweenService:Create(CloseButton, Library.TweenInfo, {
-            BackgroundColor3 = Library:GetBetterColor(Library.Scheme.MainColor, 10)
-        }):Play()
-    end)
-    CloseButton.MouseLeave:Connect(function()
-        TweenService:Create(CloseButton, Library.TweenInfo, {
-            BackgroundColor3 = Library.Scheme.MainColor
-        }):Play()
-    end)
+    local CloseButton = FarmShared.Button(Footer, "Close", UDim2.fromOffset(120, 34), 14, 3)
+    CloseButton.AnchorPoint = Vector2.new(1, 0)
+    CloseButton.Position = UDim2.fromScale(1, 0)
 
+    --// Behaviour
     local function ClearMaterials()
-        for _, Row in pairs(Farm.MaterialRows) do
-            if Row then
-                pcall(function() Row:Destroy() end)
-            end
+        for _, Row in Farm.MaterialRows do
+            pcall(function()
+                Row:Destroy()
+            end)
         end
+
         table.clear(Farm.MaterialRows)
     end
 
     local function RefreshMaterials()
         ClearMaterials()
-        for i, Mat in ipairs(Farm.Data.Materials or {}) do
-            local Row = New("Frame", {
-                Name = "Mat_" .. i,
-                BackgroundTransparency = 1,
-                Size = UDim2.fromOffset(200, 42),
-                LayoutOrder = i,
-                ZIndex = 5,
+
+        local List = Farm.Data.Materials or {}
+
+        for Index, Mat in ipairs(List) do
+            local Tile = New("Frame", {
+                Name = "Mat_" .. Index,
+                BackgroundColor3 = "MainColor",
+                LayoutOrder = Index,
+                ZIndex = 4,
                 Parent = MaterialsFrame,
             })
+            Corner(Tile, 8)
+            Library:AddOutline(Tile)
 
-            local MatIcon = Mat.Icon or Farm.Icon
-            local MatIconData = Library:GetCustomIcon(MatIcon)
-            New("ImageLabel", {
-                Name = "Icon",
+            local Inner = New("Frame", {
                 BackgroundTransparency = 1,
-                Image = MatIconData and MatIconData.Url or string.format("rbxassetid://%s", tostring(MatIcon)),
-                ImageRectOffset = MatIconData and MatIconData.ImageRectOffset or Vector2.zero,
-                ImageRectSize = MatIconData and MatIconData.ImageRectSize or Vector2.zero,
+                Size = UDim2.fromScale(1, 1),
+                ZIndex = 5,
+                Parent = Tile,
+            })
+            Padding(Inner, 10, 10, 10, 10)
+
+            local IconTile = New("Frame", {
+                BackgroundColor3 = "BackgroundColor",
+                AnchorPoint = Vector2.new(0, 0.5),
+                Position = UDim2.fromScale(0, 0.5),
+                Size = UDim2.fromOffset(38, 38),
+                ZIndex = 5,
+                Parent = Inner,
+            })
+            Corner(IconTile, 6)
+
+            local IconData = FarmShared.Icon(Mat.Icon or Farm.Icon)
+            New("ImageLabel", {
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.fromScale(0.5, 0.5),
                 Size = UDim2.fromOffset(28, 28),
-                Position = UDim2.fromOffset(0, 6),
+                Image = IconData and IconData.Url or "",
+                ImageRectOffset = IconData and IconData.ImageRectOffset or Vector2.zero,
+                ImageRectSize = IconData and IconData.ImageRectSize or Vector2.zero,
+                ScaleType = Enum.ScaleType.Fit,
                 ZIndex = 6,
-                Parent = Row,
+                Parent = IconTile,
             })
 
             local Gain = tonumber(Mat.Gain) or 0
-            local GainText = (Gain >= 0 and "+" or "") .. tostring(Gain)
-            local GainColor = Gain > 0 and Color3.fromRGB(80, 200, 120)
-                or (Gain < 0 and Color3.fromRGB(220, 80, 80) or Color3.fromRGB(140, 140, 140))
-
-            New("TextLabel", {
-                Name = "Gain",
+            local Pill = New("Frame", {
+                BackgroundColor3 = Gain > 0 and Color3.fromRGB(80, 200, 120) or "OutlineColor",
+                BackgroundTransparency = Gain > 0 and 0.82 or 0.2,
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.fromScale(1, 0.5),
+                Size = UDim2.fromOffset(0, 22),
+                AutomaticSize = Enum.AutomaticSize.X,
+                ZIndex = 5,
+                Parent = Inner,
+            })
+            Corner(Pill, 11)
+            Padding(Pill, 0, 8, 0, 8)
+            local GainLabel = New("TextLabel", {
                 BackgroundTransparency = 1,
-                Text = GainText,
+                Size = UDim2.fromOffset(0, 22),
+                AutomaticSize = Enum.AutomaticSize.X,
+                Text = (Gain > 0 and "+" or "") .. FarmShared.Compact(Gain),
                 TextSize = 12,
-                TextColor3 = GainColor,
-                FontFace = "Font",
-                Position = UDim2.fromOffset(36, 2),
-                Size = UDim2.fromOffset(36, 16),
-                TextXAlignment = Enum.TextXAlignment.Left,
                 ZIndex = 6,
-                Parent = Row,
+                Parent = Pill,
             })
 
+            if Gain > 0 then
+                FarmShared.TextColor(GainLabel, Color3.fromRGB(110, 225, 145))
+            elseif Gain < 0 then
+                FarmShared.TextColor(GainLabel, Color3.fromRGB(230, 95, 95))
+            else
+                FarmShared.TextColor(GainLabel, Dim(0.5))
+            end
+
+            -- Name + count sit between the icon and the pill
             New("TextLabel", {
-                Name = "Name",
                 BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(48, 1),
+                Size = UDim2.new(1, -104, 0, 18),
                 Text = tostring(Mat.Name or "Item"),
                 TextSize = 13,
-                TextColor3 = "FontColor",
-                FontFace = "Font",
-                Position = UDim2.fromOffset(72, 2),
-                Size = UDim2.new(1, -76, 0, 18),
                 TextXAlignment = Enum.TextXAlignment.Left,
                 TextTruncate = Enum.TextTruncate.AtEnd,
-                ZIndex = 6,
-                Parent = Row,
+                ZIndex = 5,
+                Parent = Inner,
             })
-
             New("TextLabel", {
-                Name = "Count",
                 BackgroundTransparency = 1,
-                Text = FormatNumber(Mat.Count or 0) .. " in inventory",
+                Position = UDim2.fromOffset(48, 21),
+                Size = UDim2.new(1, -104, 0, 16),
+                Text = FarmShared.Number(Mat.Count or 0) .. " owned",
                 TextSize = 11,
-                TextColor3 = function()
-                    local H, S, V = Library.Scheme.FontColor:ToHSV()
-                    return Color3.fromHSV(H, S, V * 0.5)
-                end,
-                FontFace = "Font",
-                Position = UDim2.fromOffset(36, 20),
-                Size = UDim2.new(1, -40, 0, 16),
+                TextColor3 = Dim(0.5),
                 TextXAlignment = Enum.TextXAlignment.Left,
-                ZIndex = 6,
-                Parent = Row,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                ZIndex = 5,
+                Parent = Inner,
             })
 
-            Farm.MaterialRows[i] = Row
+            Farm.MaterialRows[Index] = Tile
         end
+
+        EmptyLabel.Visible = #List == 0
+        MaterialsFrame.Visible = #List > 0
+        MaterialsCount.Text = #List > 0 and (#List .. " tracked") or ""
     end
 
     local function RefreshStats()
-        LevelValue.Text = FormatNumber(Farm.Data.Level)
-        WenValue.Text = FormatNumber(Farm.Data.TotalWen)
-        InventoryValue.Text = FormatNumber(Farm.Data.AllInventory)
-        ReputationValue.Text = FormatNumber(Farm.Data.Reputation)
-        StatusLabel.Text = tostring(Farm.Data.Status or "Online")
-        local Online = string.lower(tostring(Farm.Data.Status or "Online")) == "online"
-        StatusDot.BackgroundColor3 = Online and Color3.fromRGB(80, 200, 120) or Color3.fromRGB(200, 80, 80)
+        for Key, Label in Farm.StatValues do
+            Label.Text = FarmShared.Number(Farm.Data[Key])
+        end
+
+        for Key, Caption in Farm.StatCaptions do
+            Caption.Text = string.upper(tostring(Farm.Labels[Key] or Key))
+        end
+
+        local Status = tostring(Farm.Data.Status or "Online")
+        StatusLabel.Text = Status
+
+        if Farm.Data.StatusColor then
+            StatusDot.BackgroundColor3 = Farm.Data.StatusColor
+        else
+            StatusDot.BackgroundColor3 = string.lower(Status) == "online" and Color3.fromRGB(80, 200, 120) or Library.Scheme.AccentColor
+        end
+    end
+
+    -- Fits the card on small screens
+    local function Fit()
+        local Camera = workspace.CurrentCamera
+        local Viewport = Camera and Camera.ViewportSize or Vector2.new(1280, 720)
+        local Height = math.max(Center.AbsoluteSize.Y / math.max(Scale.Scale, 0.01), 560)
+
+        Scale.Scale = math.clamp(math.min((Viewport.X - 48) / 760, (Viewport.Y - 48) / Height), 0.45, 1)
     end
 
     function Farm:SetVisible(Bool)
         Farm.Visible = Bool and true or false
         FarmGui.Enabled = Farm.Visible
+
+        if Farm.Visible then
+            Fit()
+        end
     end
 
     function Farm:Toggle()
@@ -14088,16 +14542,42 @@ function Library:CreateFarmStats(Info)
 
     function Farm:ResetSession()
         Farm.SessionStart = os.clock()
+        Farm.StartedAt = os.date("%H:%M")
     end
 
     function Farm:SetStats(Stats)
         Stats = Stats or {}
-        if Stats.Level ~= nil then Farm.Data.Level = Stats.Level end
-        if Stats.TotalWen ~= nil then Farm.Data.TotalWen = Stats.TotalWen end
-        if Stats.AllInventory ~= nil then Farm.Data.AllInventory = Stats.AllInventory end
-        if Stats.Reputation ~= nil then Farm.Data.Reputation = Stats.Reputation end
-        if Stats.Status ~= nil then Farm.Data.Status = Stats.Status end
+
+        for _, Key in { "Level", "TotalWen", "AllInventory", "Reputation", "Status", "StatusColor" } do
+            if Stats[Key] ~= nil then
+                Farm.Data[Key] = Stats[Key]
+            end
+        end
+
         RefreshStats()
+    end
+
+    function Farm:SetStatus(Text, Color)
+        Farm.Data.Status = Text
+        Farm.Data.StatusColor = Color
+        RefreshStats()
+    end
+
+    function Farm:SetLabels(Labels)
+        for Key, Text in Labels or {} do
+            Farm.Labels[Key] = Text
+        end
+
+        RefreshStats()
+    end
+
+    function Farm:SetTitle(Text)
+        Farm.Title = tostring(Text)
+        TitleLabel.Text = Farm.Title
+    end
+
+    function Farm:SetSubtitle(Text)
+        SubtitleLabel.Text = tostring(Text)
     end
 
     function Farm:SetMaterials(List)
@@ -14107,6 +14587,7 @@ function Library:CreateFarmStats(Info)
 
     function Farm:UpdateMaterial(Name, Count, Gain, Icon)
         local Found = false
+
         for _, Mat in ipairs(Farm.Data.Materials) do
             if Mat.Name == Name then
                 if Count ~= nil then Mat.Count = Count end
@@ -14116,27 +14597,40 @@ function Library:CreateFarmStats(Info)
                 break
             end
         end
+
         if not Found then
             table.insert(Farm.Data.Materials, {
                 Name = Name,
                 Count = Count or 0,
                 Gain = Gain or 0,
-                Icon = Icon or Farm.Icon,
+                Icon = Icon,
             })
         end
+
         RefreshMaterials()
     end
 
     function Farm:Destroy()
-        for _, Conn in ipairs(Farm.Connections) do
-            pcall(function() Conn:Disconnect() end)
+        for _, Conn in Farm.Connections do
+            pcall(function()
+                Conn:Disconnect()
+            end)
         end
+
         table.clear(Farm.Connections)
         ClearMaterials()
+
+        if Farm.SweepTween then
+            pcall(function()
+                Farm.SweepTween:Cancel()
+            end)
+        end
+
         if FarmGui then
             FarmGui:Destroy()
             FarmGui = nil
         end
+
         if Library.ActiveFarmStats == Farm then
             Library.ActiveFarmStats = nil
         end
@@ -14146,13 +14640,42 @@ function Library:CreateFarmStats(Info)
         Farm:SetVisible(false)
     end)
 
-    table.insert(Farm.Connections, RunService.RenderStepped:Connect(function()
+    Farm.SweepTween = TweenService:Create(Sweep, TweenInfo.new(2.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, 0.8), {
+        Position = UDim2.fromScale(1, 0),
+    })
+    Farm.SweepTween:Play()
+
+    table.insert(Farm.Connections, Center:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+        if Farm.Visible then
+            Fit()
+        end
+    end))
+
+    pcall(function()
+        table.insert(Farm.Connections, workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+            if Farm.Visible then
+                Fit()
+            end
+        end))
+    end)
+
+    local LastSecond = -1
+    table.insert(Farm.Connections, RunService.Heartbeat:Connect(function()
         if not Farm.Visible then
             return
         end
+
         local Elapsed = os.clock() - Farm.SessionStart
-        TimerLabel.Text = FormatTime(Elapsed)
-        SessionLabel.Text = FormatDuration(Elapsed)
+        local Second = math.floor(Elapsed)
+
+        if Second == LastSecond then
+            return
+        end
+
+        LastSecond = Second
+        TimerLabel.Text = FarmShared.Clock(Elapsed)
+        StartedLabel.Text = "Started  " .. tostring(Farm.StartedAt)
+        SessionLabel.Text = "Running  " .. FarmShared.Duration(Elapsed)
     end))
 
     RefreshStats()
@@ -14164,6 +14687,437 @@ function Library:CreateFarmStats(Info)
 
     Library.ActiveFarmStats = Farm
     return Farm
+end
+
+--[[
+    Library:CreateFarmHud({
+        Title = "RAID · CLEARED 0 · WAVE 1/3",
+        Position = UDim2.fromOffset(16, 120), Width = 264,
+        Button = { Text = "Black", Callback = function() Farm:Toggle() end },  -- optional
+        EmptyText = "No items yet", MaxItems = 6,
+        Visible = true,
+    })
+    Methods: SetTitle, SetButton, ResetTimer, SetElapsed, SetRow(Key, Value, Rate?, Color?),
+             SetRows({ { Key, Value, Rate }, ... }), RemoveRow, SetItems({ { Name, Amount, Icon? } }),
+             SetVisible, Toggle, Destroy
+]]
+function Library:CreateFarmHud(Info)
+    Info = Info or {}
+
+    if Library.ActiveFarmHud and Library.ActiveFarmHud.Destroy then
+        pcall(function()
+            Library.ActiveFarmHud:Destroy()
+        end)
+        Library.ActiveFarmHud = nil
+    end
+
+    local Dim, Corner, Padding = FarmShared.Dim, FarmShared.Corner, FarmShared.Padding
+
+    local Hud = {
+        Visible = false,
+        StartedAt = os.clock(),
+        Rows = {},
+        RowOrder = 0,
+        ItemRows = {},
+        MaxItems = Info.MaxItems or 6,
+        Connections = {},
+    }
+
+    local HudGui = FarmShared.Gui("ObsidianFarmHud", 998)
+    Hud.ScreenGui = HudGui
+
+    local Frame = New("Frame", {
+        Name = "Hud",
+        BackgroundColor3 = "BackgroundColor",
+        BackgroundTransparency = Info.Transparency or 0.04,
+        Position = Info.Position or UDim2.new(1, -(Info.Width or 272) - 16, 0, 64),
+        Size = UDim2.fromOffset(Info.Width or 272, 200),
+        Active = true,
+        ZIndex = 2,
+        Parent = HudGui,
+    })
+    Corner(Frame, 8)
+    Library:AddOutline(Frame)
+    FarmShared.Spine(Frame, 12, 3)
+    Hud.Frame = Frame
+
+    local Body = New("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        ZIndex = 3,
+        Parent = Frame,
+    })
+    Padding(Body, 12, 12, 12, 16)
+    New("UIListLayout", {
+        FillDirection = Enum.FillDirection.Vertical,
+        Padding = UDim.new(0, 8),
+        Parent = Body,
+    })
+    table.insert(Hud.Connections, FarmShared.FollowHeight(Frame, Body, nil, UDim.new(0, Info.Width or 272)))
+
+    --// Header: caption + optional button
+    local Header = New("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 22),
+        LayoutOrder = 1,
+        ZIndex = 3,
+        Parent = Body,
+    })
+
+    local TitleLabel = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -64, 1, 0),
+        Text = string.upper(tostring(Info.Title or "Farm")),
+        TextSize = 12,
+        TextColor3 = Dim(0.6),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ZIndex = 4,
+        Parent = Header,
+    })
+
+    local ActionButton = FarmShared.Button(Header, "", UDim2.fromOffset(56, 22), 11, 4)
+    ActionButton.AnchorPoint = Vector2.new(1, 0)
+    ActionButton.Position = UDim2.fromScale(1, 0)
+    ActionButton.Visible = false
+
+    --// Timer
+    local TimerLabel = New("TextLabel", {
+        Name = "Timer",
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 36),
+        Text = "00:00:00",
+        TextSize = 32,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        LayoutOrder = 2,
+        ZIndex = 4,
+        Parent = Body,
+    })
+
+    local function Divider(Order)
+        return New("Frame", {
+            BackgroundColor3 = "OutlineColor",
+            Size = UDim2.new(1, 0, 0, 1),
+            LayoutOrder = Order,
+            ZIndex = 3,
+            Parent = Body,
+        })
+    end
+
+    Divider(3)
+
+    --// Rows
+    local RowsFrame = New("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        LayoutOrder = 4,
+        ZIndex = 3,
+        Parent = Body,
+    })
+    New("UIListLayout", {
+        FillDirection = Enum.FillDirection.Vertical,
+        Padding = UDim.new(0, 5),
+        Parent = RowsFrame,
+    })
+
+    Divider(5)
+
+    --// Items
+    local ItemsFrame = New("Frame", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        LayoutOrder = 6,
+        ZIndex = 3,
+        Parent = Body,
+    })
+    New("UIListLayout", {
+        FillDirection = Enum.FillDirection.Vertical,
+        Padding = UDim.new(0, 5),
+        Parent = ItemsFrame,
+    })
+
+    local EmptyLabel = New("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 16),
+        Text = Info.EmptyText or "No items yet",
+        TextSize = 13,
+        TextColor3 = Dim(0.45),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        LayoutOrder = 0,
+        ZIndex = 4,
+        Parent = ItemsFrame,
+    })
+
+    -- Value and an optional dim rate, packed against the right edge
+    local function ValueGroup(Parent, ZIndex)
+        local Group = New("Frame", {
+            BackgroundTransparency = 1,
+            AnchorPoint = Vector2.new(1, 0),
+            Position = UDim2.fromScale(1, 0),
+            Size = UDim2.fromOffset(0, 18),
+            AutomaticSize = Enum.AutomaticSize.X,
+            ZIndex = ZIndex,
+            Parent = Parent,
+        })
+        New("UIListLayout", {
+            FillDirection = Enum.FillDirection.Horizontal,
+            HorizontalAlignment = Enum.HorizontalAlignment.Right,
+            VerticalAlignment = Enum.VerticalAlignment.Center,
+            Padding = UDim.new(0, 8),
+            Parent = Group,
+        })
+
+        local Value = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromOffset(0, 18),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Text = "",
+            TextSize = 13,
+            LayoutOrder = 1,
+            ZIndex = ZIndex,
+            Parent = Group,
+        })
+        local Rate = New("TextLabel", {
+            BackgroundTransparency = 1,
+            Size = UDim2.fromOffset(0, 18),
+            AutomaticSize = Enum.AutomaticSize.X,
+            Text = "",
+            TextSize = 11,
+            TextColor3 = Dim(0.45),
+            LayoutOrder = 2,
+            Visible = false,
+            ZIndex = ZIndex,
+            Parent = Group,
+        })
+
+        return Value, Rate
+    end
+
+    local function SetValueColor(Label, Color)
+        FarmShared.TextColor(Label, Color or "FontColor")
+    end
+
+    function Hud:SetRow(Key, Value, Rate, Color)
+        Key = tostring(Key)
+
+        local Row = Hud.Rows[Key]
+
+        if not Row then
+            Hud.RowOrder += 1
+
+            local Holder = New("Frame", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 18),
+                LayoutOrder = Hud.RowOrder,
+                ZIndex = 4,
+                Parent = RowsFrame,
+            })
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(0.45, 0, 1, 0),
+                Text = Key,
+                TextSize = 13,
+                TextColor3 = Dim(0.6),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                ZIndex = 4,
+                Parent = Holder,
+            })
+
+            local ValueLabel, RateLabel = ValueGroup(Holder, 4)
+            Row = { Holder = Holder, Value = ValueLabel, Rate = RateLabel }
+            Hud.Rows[Key] = Row
+        end
+
+        Row.Value.Text = tostring(Value == nil and "" or Value)
+        Row.Rate.Text = Rate and tostring(Rate) or ""
+        Row.Rate.Visible = Rate ~= nil and Rate ~= ""
+        SetValueColor(Row.Value, Color)
+    end
+
+    function Hud:SetRows(List)
+        for _, Entry in ipairs(List or {}) do
+            Hud:SetRow(Entry[1] or Entry.Key, Entry[2] or Entry.Value, Entry[3] or Entry.Rate, Entry[4] or Entry.Color)
+        end
+    end
+
+    function Hud:RemoveRow(Key)
+        local Row = Hud.Rows[tostring(Key)]
+
+        if Row then
+            Row.Holder:Destroy()
+            Hud.Rows[tostring(Key)] = nil
+        end
+    end
+
+    function Hud:SetItems(List)
+        for _, Row in Hud.ItemRows do
+            pcall(function()
+                Row:Destroy()
+            end)
+        end
+
+        table.clear(Hud.ItemRows)
+        List = List or {}
+
+        local Shown = 0
+
+        for Index, Item in ipairs(List) do
+            if Shown >= Hud.MaxItems then
+                break
+            end
+
+            Shown += 1
+
+            local Holder = New("Frame", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 18),
+                LayoutOrder = Index,
+                ZIndex = 4,
+                Parent = ItemsFrame,
+            })
+
+            local IconData = FarmShared.Icon(Item.Icon)
+            local NameOffset = 0
+
+            if IconData then
+                NameOffset = 22
+                New("ImageLabel", {
+                    AnchorPoint = Vector2.new(0, 0.5),
+                    Position = UDim2.fromScale(0, 0.5),
+                    Size = UDim2.fromOffset(16, 16),
+                    Image = IconData.Url,
+                    ImageRectOffset = IconData.ImageRectOffset or Vector2.zero,
+                    ImageRectSize = IconData.ImageRectSize or Vector2.zero,
+                    ScaleType = Enum.ScaleType.Fit,
+                    ZIndex = 5,
+                    Parent = Holder,
+                })
+            end
+
+            New("TextLabel", {
+                BackgroundTransparency = 1,
+                Position = UDim2.fromOffset(NameOffset, 0),
+                Size = UDim2.new(1, -(NameOffset + 60), 1, 0),
+                Text = tostring(Item.Name or Item[1] or "Item"),
+                TextSize = 13,
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                ZIndex = 5,
+                Parent = Holder,
+            })
+
+            local Amount = tonumber(Item.Amount or Item[2]) or 0
+            local ValueLabel = ValueGroup(Holder, 5)
+            ValueLabel.Text = (Amount > 0 and "+" or "") .. FarmShared.Compact(Amount)
+            SetValueColor(ValueLabel, Amount > 0 and Color3.fromRGB(110, 225, 145) or nil)
+
+            table.insert(Hud.ItemRows, Holder)
+        end
+
+        if #List > Shown then
+            local More = New("TextLabel", {
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 0, 16),
+                Text = string.format("+%d more", #List - Shown),
+                TextSize = 11,
+                TextColor3 = Dim(0.45),
+                TextXAlignment = Enum.TextXAlignment.Left,
+                LayoutOrder = 999,
+                ZIndex = 4,
+                Parent = ItemsFrame,
+            })
+            table.insert(Hud.ItemRows, More)
+        end
+
+        EmptyLabel.Visible = #List == 0
+    end
+
+    function Hud:SetTitle(Text)
+        TitleLabel.Text = string.upper(tostring(Text))
+    end
+
+    function Hud:SetButton(Text, Callback)
+        Hud.ButtonCallback = Callback
+        ActionButton.Text = tostring(Text or "")
+        ActionButton.Visible = Text ~= nil and Text ~= ""
+        TitleLabel.Size = ActionButton.Visible and UDim2.new(1, -64, 1, 0) or UDim2.fromScale(1, 1)
+    end
+
+    function Hud:ResetTimer()
+        Hud.StartedAt = os.clock()
+    end
+
+    function Hud:SetElapsed(Seconds)
+        Hud.StartedAt = os.clock() - (tonumber(Seconds) or 0)
+    end
+
+    function Hud:SetVisible(Bool)
+        Hud.Visible = Bool and true or false
+        HudGui.Enabled = Hud.Visible
+    end
+
+    function Hud:Toggle()
+        Hud:SetVisible(not Hud.Visible)
+    end
+
+    function Hud:Destroy()
+        for _, Conn in Hud.Connections do
+            pcall(function()
+                Conn:Disconnect()
+            end)
+        end
+
+        table.clear(Hud.Connections)
+
+        if HudGui then
+            HudGui:Destroy()
+            HudGui = nil
+        end
+
+        if Library.ActiveFarmHud == Hud then
+            Library.ActiveFarmHud = nil
+        end
+    end
+
+    ActionButton.MouseButton1Click:Connect(function()
+        if Hud.ButtonCallback then
+            Library:SafeCallback(Hud.ButtonCallback)
+        end
+    end)
+
+    Library:MakeDraggable(Frame, Frame, true)
+
+    local LastSecond = -1
+    table.insert(Hud.Connections, RunService.Heartbeat:Connect(function()
+        if not Hud.Visible then
+            return
+        end
+
+        local Elapsed = os.clock() - Hud.StartedAt
+        local Second = math.floor(Elapsed)
+
+        if Second ~= LastSecond then
+            LastSecond = Second
+            TimerLabel.Text = FarmShared.Clock(Elapsed)
+        end
+    end))
+
+    if Info.Button then
+        Hud:SetButton(Info.Button.Text, Info.Button.Callback)
+    end
+
+    Hud:SetItems({})
+
+    if Info.Visible ~= false then
+        Hud:SetVisible(true)
+    end
+
+    Library.ActiveFarmHud = Hud
+    return Hud
 end
 
 
@@ -14214,6 +15168,13 @@ function Library:Unload()
             Library.ActiveFarmStats:Destroy()
         end)
         Library.ActiveFarmStats = nil
+    end
+
+    if Library.ActiveFarmHud then
+        pcall(function()
+            Library.ActiveFarmHud:Destroy()
+        end)
+        Library.ActiveFarmHud = nil
     end
 
     if ScreenGui then
